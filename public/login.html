@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login — Lightning Pay</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <style>
+    body { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--bg-primary); position: relative; overflow: hidden; }
+    body::before {
+      content: '';
+      position: fixed;
+      top: -50%; left: -50%;
+      width: 200%; height: 200%;
+      background: radial-gradient(ellipse at 60% 40%, rgba(99,102,241,0.12) 0%, transparent 50%),
+                  radial-gradient(ellipse at 30% 70%, rgba(139,92,246,0.08) 0%, transparent 50%);
+      pointer-events: none;
+    }
+    .auth-card {
+      width: 100%;
+      max-width: 420px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 40px;
+      box-shadow: var(--shadow-lg);
+      position: relative;
+      z-index: 1;
+    }
+    .auth-logo { text-align: center; margin-bottom: 28px; }
+    .auth-logo .logo-icon { font-size: 40px; display: block; margin-bottom: 8px; }
+    .auth-logo h1 { font-size: 24px; font-weight: 800; background: linear-gradient(135deg, #fff, #94a3b8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .auth-logo p { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+    .auth-footer { text-align: center; margin-top: 20px; font-size: 13px; color: var(--text-muted); }
+    .error-msg { display: none; }
+    .btn-auth { width: 100%; padding: 12px; font-size: 15px; }
+    .divider { text-align: center; margin: 20px 0; color: var(--text-muted); font-size: 12px; position: relative; }
+    .divider::before, .divider::after { content: ''; position: absolute; top: 50%; width: calc(50% - 20px); height: 1px; background: var(--border); }
+    .divider::before { left: 0; } .divider::after { right: 0; }
+  </style>
+</head>
+<body>
+<div class="auth-card">
+  <div class="auth-logo">
+    <span class="logo-icon">⚡</span>
+    <h1>Lightning Pay</h1>
+    <p>Sign in to your reseller dashboard</p>
+  </div>
+
+  <div class="alert alert-danger error-msg" id="errorMsg"></div>
+
+  <div class="form-group">
+    <label class="form-label">Username or Email</label>
+    <input class="form-control" type="text" id="username" placeholder="username or email@domain.com" autofocus>
+  </div>
+  <div class="form-group">
+    <label class="form-label">Password</label>
+    <input class="form-control" type="password" id="password" placeholder="Your password" onkeydown="if(event.key==='Enter')login()">
+  </div>
+
+  <button class="btn btn-primary btn-auth" id="loginBtn" onclick="login()">⚡ Sign In</button>
+
+  <div class="divider">or</div>
+
+  <div class="auth-footer">
+    Don't have an account? <a href="/register" style="color:var(--accent);font-weight:600">Register</a>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+async function login() {
+    const username = document.getElementById('username').value.trim();
+    const password = document.getElementById('password').value;
+    const btn = document.getElementById('loginBtn');
+    const err = document.getElementById('errorMsg');
+
+    if (!username || !password) {
+        err.textContent = 'Please enter your username and password';
+        err.style.display = 'flex';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Signing in...';
+    err.style.display = 'none';
+
+    try {
+        const resp = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        const data = await resp.json();
+
+        if (!resp.ok) {
+            err.textContent = data.error || 'Login failed';
+            err.style.display = 'flex';
+            btn.disabled = false;
+            btn.textContent = '⚡ Sign In';
+            return;
+        }
+
+        window.location.href = data.redirect || '/reseller';
+    } catch(e) {
+        err.textContent = 'Connection error. Please try again.';
+        err.style.display = 'flex';
+        btn.disabled = false;
+        btn.textContent = '⚡ Sign In';
+    }
+}
+</script>
+</body>
+</html>

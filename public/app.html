@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lightning Pay — Reseller Dashboard</title>
+  <meta name="description" content="Manage your Lightning Network payments, links, and sub-users.">
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+</head>
+<body>
+<div class="layout">
+
+  <!-- ─── SIDEBAR ─────────────────────────────────── -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">⚡</div>
+      <div>
+        <div class="logo-text">Lightning Pay</div>
+        <div class="logo-sub">Reseller Dashboard</div>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-label">Reseller</div>
+
+      <div class="nav-item active" data-page="dashboard" onclick="navigate('dashboard')">
+        <span class="nav-icon">📊</span> Dashboard
+      </div>
+      <div class="nav-item" data-page="wallet" onclick="navigate('wallet')">
+        <span class="nav-icon">⚡</span> Lightning Wallet
+        <span class="wallet-status-indicator" id="navWalletBadge" style="display:none;margin-left:auto;">
+          <span class="status-dot inactive" id="navWalletDot"></span>
+        </span>
+      </div>
+      <div class="nav-item" data-page="themes" onclick="navigate('themes')">
+        <span class="nav-icon">🎨</span> Payment Themes
+      </div>
+      <div class="nav-item" data-page="links" onclick="navigate('links')">
+        <span class="nav-icon">🔗</span> Payment Links
+      </div>
+      <div class="nav-item" data-page="scancodes" onclick="navigate('scancodes')">
+        <span class="nav-icon">📱</span> My Scan Code
+      </div>
+      <div class="nav-item" data-page="payments" onclick="navigate('payments')">
+        <span class="nav-icon">💳</span> Payments
+      </div>
+      <div class="nav-item" data-page="activity" onclick="navigate('activity')">
+        <span class="nav-icon">📋</span> Activity
+      </div>
+      <div class="nav-item" data-page="users" onclick="navigate('users')">
+        <span class="nav-icon">👥</span> Users
+      </div>
+
+      <div class="nav-group" id="settingsGroup">
+        <div class="nav-item nav-group-header" onclick="toggleGroup('settingsGroup')">
+          <span class="nav-icon">⚙️</span> Settings
+          <span class="nav-chevron">›</span>
+        </div>
+        <div class="nav-group-items">
+          <div class="nav-item" data-page="security" onclick="navigate('security')">
+            <span class="nav-icon">🔐</span> Security
+          </div>
+          <div class="nav-item" data-page="devices" onclick="navigate('devices')">
+            <span class="nav-icon">📱</span> Device Login
+          </div>
+          <div class="nav-item" data-page="charge" onclick="navigate('charge')">
+            <span class="nav-icon">💰</span> Transaction Charge
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="sidebar-footer">
+      <div class="user-pill" id="userPill">
+        <div class="user-avatar" id="userAvatar">?</div>
+        <div>
+          <div class="user-name" id="userName">Loading...</div>
+          <div class="user-role">Reseller</div>
+        </div>
+        <span class="logout-btn" onclick="logout()" title="Logout">⏻</span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ─── MAIN ──────────────────────────────────────── -->
+  <div class="main">
+    <header class="topbar">
+      <div class="flex-center gap-12">
+        <div class="hamburger" onclick="toggleSidebar()">☰</div>
+        <span class="topbar-title" id="topbarTitle">Dashboard</span>
+      </div>
+      <div class="topbar-right">
+        <div class="topbar-badge" id="liveIndicator">
+          <span class="dot"></span> Live
+        </div>
+        <button class="btn btn-sm btn-ghost" onclick="navigate('links')">+ New Link</button>
+      </div>
+    </header>
+
+    <div class="content">
+
+      <!-- ─── DASHBOARD PAGE ─────────────────────── -->
+      <div class="page active" id="page-dashboard">
+        <div class="page-header">
+          <div>
+            <div class="page-title">Dashboard</div>
+            <div class="page-sub">Your payment overview and recent activity</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="loadDashboard()">⟳ Refresh</button>
+        </div>
+
+        <div class="metrics-grid" id="metricsGrid">
+          <div class="metric-card blue skeleton">
+            <div class="metric-icon">🔗</div>
+            <div class="metric-label">Payment Links</div>
+            <div class="metric-value" id="mLinks">—</div>
+            <div class="metric-sub">Total created</div>
+          </div>
+          <div class="metric-card green skeleton">
+            <div class="metric-icon">👆</div>
+            <div class="metric-label">Total Clicks</div>
+            <div class="metric-value" id="mClicks">—</div>
+            <div class="metric-sub">All time visits</div>
+          </div>
+          <div class="metric-card yellow skeleton">
+            <div class="metric-icon">💵</div>
+            <div class="metric-label">Paid USD</div>
+            <div class="metric-value" id="mPaid">—</div>
+            <div class="metric-sub">Total received</div>
+          </div>
+          <div class="metric-card red skeleton">
+            <div class="metric-icon">⏳</div>
+            <div class="metric-label">Pending Invoices</div>
+            <div class="metric-value" id="mPending">—</div>
+            <div class="metric-sub">Awaiting payment</div>
+          </div>
+          <div class="metric-card purple skeleton">
+            <div class="metric-icon">⌛</div>
+            <div class="metric-label">Expired Invoices</div>
+            <div class="metric-value" id="mExpired">—</div>
+            <div class="metric-sub">Timed out</div>
+          </div>
+        </div>
+
+        <!-- Stats Row -->
+        <div class="grid-3 mb-24">
+          <div class="card">
+            <div class="card-title">📅 7-Day Revenue</div>
+            <div class="metric-value text-green" id="sPaid7d" style="font-size:24px">$0.00</div>
+            <div class="metric-sub mt-8">Paid in last 7 days</div>
+          </div>
+          <div class="card">
+            <div class="card-title">📅 30-Day Revenue</div>
+            <div class="metric-value text-accent" id="sPaid30d" style="font-size:24px">$0.00</div>
+            <div class="metric-sub mt-8">Paid in last 30 days</div>
+          </div>
+          <div class="card">
+            <div class="card-title">📈 Conversion Rate</div>
+            <div class="metric-value text-yellow" id="sConversion" style="font-size:24px">0%</div>
+            <div class="metric-sub mt-8">Paid / total invoices</div>
+          </div>
+        </div>
+
+        <!-- Wallet Health -->
+        <div class="wallet-status-box inactive" id="dashWalletBox">
+          <div class="wsb-icon">⚡</div>
+          <div class="flex-1">
+            <div class="wsb-title" id="dashWalletTitle">Wallet Not Connected</div>
+            <div class="wsb-sub" id="dashWalletSub">Set up your Lightning wallet to start receiving payments</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="navigate('wallet')">Setup Wallet →</button>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="grid-3 mb-24">
+          <div class="card" style="cursor:pointer;text-align:center" onclick="navigate('links')">
+            <div style="font-size:32px;margin-bottom:8px">🔗</div>
+            <div style="font-weight:600">Create Link</div>
+            <div class="metric-sub">New payment link</div>
+          </div>
+          <div class="card" style="cursor:pointer;text-align:center" onclick="exportPayments()">
+            <div style="font-size:32px;margin-bottom:8px">📊</div>
+            <div style="font-weight:600">Export CSV</div>
+            <div class="metric-sub">Download payments</div>
+          </div>
+          <div class="card" style="cursor:pointer;text-align:center" onclick="navigate('wallet')">
+            <div style="font-size:32px;margin-bottom:8px">⚡</div>
+            <div style="font-weight:600">Wallet Settings</div>
+            <div class="metric-sub">Configure provider</div>
+          </div>
+        </div>
+
+        <!-- Tables Row -->
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">🔝 Top Payment Links</div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Link</th><th>Amount</th><th>Clicks</th><th>Invoices</th><th>Status</th></tr>
+                </thead>
+                <tbody id="topLinksTable">
+                  <tr><td colspan="5"><div class="empty-state"><div class="empty-icon">🔗</div><div class="empty-text">No links yet</div></div></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">💳 Recent Payments</div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Time</th><th>Link</th><th>Amount</th><th>Status</th></tr>
+                </thead>
+                <tbody id="recentPaymentsTable">
+                  <tr><td colspan="4"><div class="empty-state"><div class="empty-icon">💳</div><div class="empty-text">No payments yet</div></div></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recent Clicks -->
+        <div class="card mt-16">
+          <div class="card-title">👆 Recent Clicks</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Time</th><th>Link</th><th>IP</th><th>Device</th></tr>
+              </thead>
+              <tbody id="recentClicksTable">
+                <tr><td colspan="4"><div class="empty-state"><div class="empty-icon">👆</div><div class="empty-text">No clicks yet</div></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── WALLET PAGE ───────────────────────── -->
+      <div class="page" id="page-wallet">
+        <div class="page-header">
+          <div>
+            <div class="page-title">⚡ Lightning Wallet</div>
+            <div class="page-sub">Connect your payment provider to receive Lightning payments</div>
+          </div>
+        </div>
+
+        <div class="wallet-status-box inactive mb-24" id="walletStatusBox">
+          <div class="wsb-icon">⚡</div>
+          <div>
+            <div class="wsb-title" id="walletStatusTitle">INACTIVE</div>
+            <div class="wsb-sub" id="walletStatusSub">No wallet provider connected. Choose one below.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Choose Payment Provider</div>
+          <div class="radio-card-group">
+
+            <!-- Email -->
+            <div class="radio-card" id="rcEmail" onclick="selectProvider('email')">
+              <label>
+                <input type="radio" name="provider" value="email" id="radioEmail">
+                <div>
+                  <div class="rc-title">⚡ Lightning Wallet Email <span class="badge badge-yellow" style="margin-left:8px">Manual</span></div>
+                  <div class="rc-sub">Use Wallet of Satoshi or similar Lightning email wallets</div>
+                  <div class="rc-body">
+                    <div class="form-group mt-12">
+                      <label class="form-label">Lightning Email Address</label>
+                      <input class="form-control" type="email" id="walletEmail" placeholder="yourname@walletofsatoshi.com">
+                      <div class="form-hint">Only use: name@walletofsatoshi.com or similar Lightning email providers</div>
+                    </div>
+                    <button class="btn btn-primary btn-sm" onclick="saveEmailWallet(event)">Save Wallet Email</button>
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            <!-- OpenNode -->
+            <div class="radio-card" id="rcOpennode" onclick="selectProvider('opennode')">
+              <label>
+                <input type="radio" name="provider" value="opennode" id="radioOpennode">
+                <div>
+                  <div class="rc-title">🔶 OpenNode API <span class="badge badge-green" style="margin-left:8px">Auto Paid</span></div>
+                  <div class="rc-sub">Automated Lightning invoices via OpenNode. Payments confirmed instantly.</div>
+                  <div class="rc-body">
+                    <div class="form-row mt-12">
+                      <div class="form-group">
+                        <label class="form-label">OpenNode API Key</label>
+                        <input class="form-control" type="password" id="opennodeKey" placeholder="your-opennode-api-key">
+                      </div>
+                      <div class="form-group">
+                        <label class="form-label">Environment</label>
+                        <select class="form-control" id="opennodeEnv">
+                          <option value="live">Live (Production)</option>
+                          <option value="dev">Dev (Testnet)</option>
+                        </select>
+                      </div>
+                    </div>
+                    <button class="btn btn-primary btn-sm" onclick="saveOpennode(event)">Save OpenNode</button>
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            <!-- BTCPay -->
+            <div class="radio-card" id="rcBtcpay" onclick="selectProvider('btcpay')">
+              <label>
+                <input type="radio" name="provider" value="btcpay" id="radioBtcpay">
+                <div>
+                  <div class="rc-title">🟠 BTCPay Server <span class="badge badge-green" style="margin-left:8px">Auto Paid</span></div>
+                  <div class="rc-sub">Self-hosted Bitcoin payment processor. Full control over your payments.</div>
+                  <div class="rc-body">
+                    <div class="form-row mt-12">
+                      <div class="form-group">
+                        <label class="form-label">BTCPay Server URL</label>
+                        <input class="form-control" type="url" id="btcpayUrl" placeholder="https://btcpay.yourdomain.com">
+                      </div>
+                      <div class="form-group">
+                        <label class="form-label">Store ID</label>
+                        <input class="form-control" id="btcpayStoreId" placeholder="your-store-id">
+                      </div>
+                    </div>
+                    <div class="form-row">
+                      <div class="form-group">
+                        <label class="form-label">API Key</label>
+                        <input class="form-control" type="password" id="btcpayKey" placeholder="your-api-key">
+                      </div>
+                      <div class="form-group">
+                        <label class="form-label">Webhook ID (optional)</label>
+                        <input class="form-control" id="btcpayWebhookId" placeholder="webhook-id">
+                      </div>
+                    </div>
+                    <div class="form-group">
+                      <label class="form-label">Webhook Secret (optional)</label>
+                      <input class="form-control" type="password" id="btcpayWebhookSecret" placeholder="webhook-secret">
+                    </div>
+                    <div class="flex gap-8">
+                      <button class="btn btn-ghost btn-sm" onclick="testBtcpay(event)">Test Connection</button>
+                      <button class="btn btn-primary btn-sm" onclick="saveBtcpay(event)">Save BTCPay</button>
+                    </div>
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── THEMES PAGE ───────────────────────── -->
+      <div class="page" id="page-themes">
+        <div class="page-header">
+          <div>
+            <div class="page-title">🎨 Payment Themes</div>
+            <div class="page-sub">Choose the look of your payment pages</div>
+          </div>
+        </div>
+        <div class="grid-3 mb-24">
+          <div class="card"><div class="card-title">Available Themes</div><div class="metric-value" id="themeCount" style="font-size:28px">8</div></div>
+          <div class="card"><div class="card-title">Default Theme</div><div class="metric-value text-green" style="font-size:20px">Cash Green</div></div>
+          <div class="card"><div class="card-title">Used During Link Create</div><div class="metric-value text-accent" style="font-size:20px">Reseller</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Payment Page Themes</div>
+          <div class="themes-grid" id="themesGrid">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── LINKS PAGE ─────────────────────────── -->
+      <div class="page" id="page-links">
+        <div class="page-header">
+          <div>
+            <div class="page-title">🔗 Payment Links</div>
+            <div class="page-sub">Create and manage your payment links</div>
+          </div>
+          <button class="btn btn-primary" onclick="toggleCreateForm()">+ Create Link</button>
+        </div>
+
+        <!-- Stats -->
+        <div class="grid-4 mb-24">
+          <div class="metric-card blue"><div class="metric-icon">🔗</div><div class="metric-label">Total Links</div><div class="metric-value" id="lTotalLinks">0</div></div>
+          <div class="metric-card green"><div class="metric-icon">✅</div><div class="metric-label">Active</div><div class="metric-value" id="lActiveLinks">0</div></div>
+          <div class="metric-card yellow"><div class="metric-icon">👆</div><div class="metric-label">Total Clicks</div><div class="metric-value" id="lClicks">0</div></div>
+          <div class="metric-card purple"><div class="metric-icon">📄</div><div class="metric-label">Invoices</div><div class="metric-value" id="lInvoices">0</div></div>
+        </div>
+
+        <!-- Create Form -->
+        <div class="card mb-24 d-none" id="createLinkForm">
+          <div class="card-title">Create New Payment Link</div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">URL Slug *</label>
+              <input class="form-control" id="newSlug" placeholder="my-shop" oninput="previewSlug()">
+              <div class="form-hint" id="slugPreview">Your link: <strong id="slugUrl">—</strong></div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Title *</label>
+              <input class="form-control" id="newTitle" placeholder="Payment to my shop">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Brand Name</label>
+              <input class="form-control" id="newBrand" placeholder="Cash Pay" value="Cash Pay">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Amount Type</label>
+              <select class="form-control" id="newAmountType" onchange="toggleFixedAmount()">
+                <option value="open">Open (customer enters amount)</option>
+                <option value="fixed">Fixed amount</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row" id="amountRangeRow">
+            <div class="form-group">
+              <label class="form-label">Min Amount ($)</label>
+              <input class="form-control" id="newMin" type="number" value="1" min="0.01">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Max Amount ($)</label>
+              <input class="form-control" id="newMax" type="number" value="2000">
+            </div>
+          </div>
+          <div class="form-row d-none" id="fixedAmountRow">
+            <div class="form-group">
+              <label class="form-label">Fixed Amount ($)</label>
+              <input class="form-control" id="newFixed" type="number" placeholder="100">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Logo Image (optional)</label>
+              <input class="form-control" type="file" id="newLogo" accept="image/*">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Domain</label>
+              <input class="form-control" id="newDomain" value="localhost:3000">
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Payment Theme</label>
+            <div class="themes-grid" id="createThemeGrid" style="grid-template-columns: repeat(auto-fill, minmax(150px,1fr))"></div>
+          </div>
+          <div class="flex gap-8 mt-16">
+            <button class="btn btn-primary" onclick="createLink()">⚡ Generate Link</button>
+            <button class="btn btn-ghost" onclick="toggleCreateForm()">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Links Table -->
+        <div class="card">
+          <div class="flex-between mb-16">
+            <div class="card-title" style="margin-bottom:0">Your Payment Links</div>
+            <div class="search-wrap">
+              <span class="search-icon">🔍</span>
+              <input class="form-control" id="linksSearch" placeholder="Search links..." oninput="filterLinks()" style="width:200px">
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Payment Link</th><th>Owner</th><th>Theme</th><th>Amount</th>
+                  <th>Clicks</th><th>Invoices</th><th>Status</th><th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="linksTable">
+                <tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🔗</div><div class="empty-text">No payment links yet. Create your first!</div></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── SCAN CODES PAGE ───────────────────── -->
+      <div class="page" id="page-scancodes">
+        <div class="page-header">
+          <div>
+            <div class="page-title">📱 My Scan Code</div>
+            <div class="page-sub">QR codes for in-person payments</div>
+          </div>
+        </div>
+        <div class="grid-4 mb-24">
+          <div class="metric-card blue"><div class="metric-icon">📱</div><div class="metric-label">Scan Codes</div><div class="metric-value" id="scCount">0</div></div>
+          <div class="metric-card green"><div class="metric-icon">✅</div><div class="metric-label">Active Links</div><div class="metric-value" id="scActive">0</div></div>
+          <div class="metric-card yellow"><div class="metric-icon">👆</div><div class="metric-label">Clicks</div><div class="metric-value" id="scClicks">0</div></div>
+          <div class="metric-card purple"><div class="metric-icon">📄</div><div class="metric-label">Invoices</div><div class="metric-value" id="scInvoices">0</div></div>
+        </div>
+        <div class="card">
+          <div class="card-title">QR Payment Codes</div>
+          <div id="scanCodesGrid" class="grid-3">
+            <div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">📱</div><div class="empty-text">No scan codes yet. Create a payment link to generate QR codes.</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── PAYMENTS PAGE ──────────────────────── -->
+      <div class="page" id="page-payments">
+        <div class="page-header">
+          <div>
+            <div class="page-title">💳 Payments</div>
+            <div class="page-sub">All payment transactions</div>
+          </div>
+          <button class="btn btn-outline-green btn-sm" onclick="exportPayments()">📊 Export CSV</button>
+        </div>
+
+        <div class="grid-4 mb-24">
+          <div class="metric-card yellow" style="cursor:pointer" onclick="filterPaymentStatus('pending')"><div class="metric-icon">⏳</div><div class="metric-label">Pending</div><div class="metric-value" id="pyPending">0</div><div class="metric-sub">Waiting</div></div>
+          <div class="metric-card green" style="cursor:pointer" onclick="filterPaymentStatus('paid')"><div class="metric-icon">✅</div><div class="metric-label">Paid</div><div class="metric-value" id="pyPaid">0</div><div class="metric-sub">Complete</div></div>
+          <div class="metric-card red" style="cursor:pointer" onclick="filterPaymentStatus('failed')"><div class="metric-icon">❌</div><div class="metric-label">Failed</div><div class="metric-value" id="pyFailed">0</div><div class="metric-sub">Problem</div></div>
+          <div class="metric-card purple" style="cursor:pointer" onclick="filterPaymentStatus('expired')"><div class="metric-icon">⌛</div><div class="metric-label">Expired</div><div class="metric-value" id="pyExpired">0</div><div class="metric-sub">Timed out</div></div>
+        </div>
+
+        <!-- Filters -->
+        <div class="card mb-24">
+          <div class="card-title">Filter Payments</div>
+          <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+            <div class="form-group" style="margin:0;flex:1;min-width:140px">
+              <label class="form-label">Status</label>
+              <select class="form-control" id="pyStatusFilter">
+                <option value="">All statuses</option>
+                <option value="pending">Pending</option>
+                <option value="paid">Paid</option>
+                <option value="failed">Failed</option>
+                <option value="expired">Expired</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin:0;flex:1;min-width:140px">
+              <label class="form-label">From Date</label>
+              <input class="form-control" type="date" id="pyFromDate">
+            </div>
+            <div class="form-group" style="margin:0;flex:1;min-width:140px">
+              <label class="form-label">To Date</label>
+              <input class="form-control" type="date" id="pyToDate">
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="loadPayments()">Filter</button>
+            <button class="btn btn-ghost btn-sm" onclick="clearPaymentFilters()">Clear</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="flex-between mb-16">
+            <div class="card-title" style="margin-bottom:0">Payment History <span class="badge badge-green" id="liveTag">● Live refresh 10s</span></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th><th>Link</th><th>Payer IP</th><th>Amount</th>
+                  <th>Charge</th><th>Total</th><th>Wallet</th><th>Status</th><th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="paymentsTable">
+                <tr><td colspan="9"><div class="empty-state"><div class="empty-icon">💳</div><div class="empty-text">No payments yet</div></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── ACTIVITY PAGE ──────────────────────── -->
+      <div class="page" id="page-activity">
+        <div class="page-header">
+          <div>
+            <div class="page-title">📋 System Activity</div>
+            <div class="page-sub">Audit log of all system events</div>
+          </div>
+        </div>
+
+        <div class="card mb-24">
+          <div class="card-title">Filter Activity</div>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+            <div class="form-group" style="margin:0;flex:1;min-width:140px">
+              <label class="form-label">Event</label>
+              <select class="form-control" id="actEventFilter">
+                <option value="">All events</option>
+                <option value="login">Login</option>
+                <option value="password_changed">Password changed</option>
+                <option value="wallet_updated">Wallet updated</option>
+                <option value="link_created">Link created</option>
+              </select>
+            </div>
+            <div class="form-group" style="margin:0;flex:1;min-width:140px">
+              <label class="form-label">From</label>
+              <input class="form-control" type="date" id="actFrom">
+            </div>
+            <div class="form-group" style="margin:0;flex:1;min-width:140px">
+              <label class="form-label">To</label>
+              <input class="form-control" type="date" id="actTo">
+            </div>
+            <button class="btn btn-primary btn-sm" onclick="loadActivity()">Filter</button>
+            <button class="btn btn-ghost btn-sm" onclick="clearActivityFilters()">Reset</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="flex-between mb-16">
+            <div class="card-title" style="margin-bottom:0">Team Activity Timeline</div>
+            <span class="badge badge-grey" id="activityCount">0 records</span>
+          </div>
+          <div class="timeline" id="activityTimeline">
+            <div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">No activity recorded yet</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── USERS PAGE ─────────────────────────── -->
+      <div class="page" id="page-users">
+        <div class="page-header">
+          <div>
+            <div class="page-title">👥 Users</div>
+            <div class="page-sub">Manage sub-users and withdrawal requests</div>
+          </div>
+          <button class="btn btn-primary" onclick="toggleUserForm()">+ New User</button>
+        </div>
+
+        <div class="grid-4 mb-24">
+          <div class="metric-card blue"><div class="metric-icon">👥</div><div class="metric-label">Total Users</div><div class="metric-value" id="uTotal">0</div></div>
+          <div class="metric-card green"><div class="metric-icon">✅</div><div class="metric-label">Active</div><div class="metric-value" id="uActive">0</div></div>
+          <div class="metric-card yellow"><div class="metric-icon">🔗</div><div class="metric-label">User Links</div><div class="metric-value" id="uLinks">0</div></div>
+          <div class="metric-card red"><div class="metric-icon">💸</div><div class="metric-label">Pending Withdraw</div><div class="metric-value" id="uWithdraw">0</div></div>
+        </div>
+
+        <!-- Create User Form -->
+        <div class="card mb-24 d-none" id="createUserForm">
+          <div class="card-title">Create Sub-User</div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Name *</label>
+              <input class="form-control" id="newUserName" placeholder="Customer name">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Email *</label>
+              <input class="form-control" type="email" id="newUserEmail" placeholder="user@example.com">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Password *</label>
+              <input class="form-control" type="password" id="newUserPass" placeholder="Minimum 6 characters">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Rate per $1</label>
+              <input class="form-control" type="number" id="newUserRate" value="1" step="0.01" min="0.01">
+              <div class="form-hint">Exchange rate multiplier for this user</div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Transaction Charge Mode</label>
+              <select class="form-control" id="newUserChargeMode">
+                <option value="inherit">Use reseller default</option>
+                <option value="none">No charge</option>
+                <option value="fixed">Fixed amount</option>
+                <option value="percent">Percentage</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Charge Value</label>
+              <input class="form-control" type="number" id="newUserChargeVal" value="0" step="0.01">
+            </div>
+          </div>
+          <div class="flex gap-8">
+            <button class="btn btn-primary" onclick="createUser()">Create User</button>
+            <button class="btn btn-ghost" onclick="toggleUserForm()">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Users Table -->
+        <div class="card mb-24">
+          <div class="flex-between mb-16">
+            <div class="card-title" style="margin-bottom:0">User Accounts <span class="badge badge-grey" id="userCount">0 accounts</span></div>
+            <div class="search-wrap">
+              <span class="search-icon">🔍</span>
+              <input class="form-control" id="userSearch" placeholder="Search users..." oninput="filterUsers()" style="width:200px">
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Name</th><th>Email</th><th>Rate</th><th>Links</th><th>Balance</th><th>Status</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="usersTable">
+                <tr><td colspan="7"><div class="empty-state"><div class="empty-icon">👥</div><div class="empty-text">No users created yet</div></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Withdrawals -->
+        <div class="card">
+          <div class="card-title">💸 Withdrawal Requests <span class="badge badge-yellow" id="withdrawCount">0 pending</span></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>User</th><th>USD</th><th>Rate</th><th>Payout</th><th>Status</th><th>Date</th><th>Action</th></tr>
+              </thead>
+              <tbody id="withdrawalsTable">
+                <tr><td colspan="7"><div class="empty-state"><div class="empty-icon">💸</div><div class="empty-text">No withdrawal requests</div></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── SECURITY PAGE ──────────────────────── -->
+      <div class="page" id="page-security">
+        <div class="page-header">
+          <div>
+            <div class="page-title">🔐 Security</div>
+            <div class="page-sub">Two-factor authentication and account security</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <!-- TOTP -->
+          <div class="card">
+            <div class="card-title">🔐 Authenticator App (TOTP)</div>
+            <div id="totpSection">
+              <div class="alert alert-info mb-16">Required for wallet changes and password updates.</div>
+              <div id="totpSetup" class="d-none">
+                <p class="text-secondary mb-16" style="font-size:13.5px">Scan this QR code with Google Authenticator or Authy:</p>
+                <div class="mb-16"><img id="totpQr" alt="QR Code" style="border-radius:8px;max-width:180px"></div>
+                <div class="form-group">
+                  <label class="form-label">Backup Secret (save this!)</label>
+                  <input class="form-control font-mono" id="totpSecret" readonly>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Enter 6-digit code to verify</label>
+                  <input class="form-control font-mono" id="totpCode" placeholder="000000" maxlength="6">
+                </div>
+                <button class="btn btn-success" onclick="enableTotp()">✅ Enable 2FA</button>
+              </div>
+              <div id="totpEnabled" class="d-none">
+                <div class="alert alert-success">✅ Two-factor authentication is ENABLED</div>
+                <div class="form-group">
+                  <label class="form-label">Enter code to disable</label>
+                  <input class="form-control font-mono" id="totpDisableCode" placeholder="000000" maxlength="6">
+                </div>
+                <button class="btn btn-danger btn-sm" onclick="disableTotp()">Disable 2FA</button>
+              </div>
+              <div id="totpInactive">
+                <div class="alert alert-warning">⚠️ 2FA is not enabled. Enable it for better security.</div>
+                <button class="btn btn-primary btn-sm" onclick="setupTotp()">Setup Authenticator</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Password -->
+          <div class="card">
+            <div class="card-title">🔑 Change Password</div>
+            <div class="form-group">
+              <label class="form-label">New Password</label>
+              <input class="form-control" type="password" id="newPass" placeholder="Minimum 6 characters">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Confirm Password</label>
+              <input class="form-control" type="password" id="confirmPass" placeholder="Repeat password">
+            </div>
+            <button class="btn btn-primary" onclick="changePassword()">Update Password</button>
+          </div>
+        </div>
+
+        <!-- Security Log -->
+        <div class="card mt-16">
+          <div class="card-title">📋 Security Activity</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Time</th><th>Event</th><th>IP</th><th>Device</th></tr></thead>
+              <tbody id="securityLog">
+                <tr><td colspan="4"><div class="empty-state"><div class="empty-icon">📋</div><div class="empty-text">No activity</div></div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── DEVICES PAGE ───────────────────────── -->
+      <div class="page" id="page-devices">
+        <div class="page-header">
+          <div>
+            <div class="page-title">📱 Device Login</div>
+            <div class="page-sub">Manage active sessions across all your devices</div>
+          </div>
+          <button class="btn btn-outline-red btn-sm" onclick="removeAllDevices()">Remove All Other Devices</button>
+        </div>
+
+        <div class="grid-4 mb-24">
+          <div class="metric-card green"><div class="metric-icon">📱</div><div class="metric-label">Active Devices</div><div class="metric-value" id="devCount">0</div></div>
+          <div class="metric-card blue"><div class="metric-icon">💻</div><div class="metric-label">Current Device</div><div class="metric-value" style="font-size:16px" id="devCurrent">—</div></div>
+          <div class="metric-card yellow"><div class="metric-icon">🌐</div><div class="metric-label">Current IP</div><div class="metric-value font-mono" style="font-size:14px" id="devIp">—</div></div>
+          <div class="metric-card purple"><div class="metric-icon">🔐</div><div class="metric-label">Authenticator</div><div class="metric-value" style="font-size:16px" id="devAuth">Off</div></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Logged-in Devices</div>
+          <div id="devicesList"></div>
+        </div>
+      </div>
+
+      <!-- ─── CHARGE PAGE ────────────────────────── -->
+      <div class="page" id="page-charge">
+        <div class="page-header">
+          <div>
+            <div class="page-title">💰 Transaction Charge</div>
+            <div class="page-sub">Set the fee added to each invoice</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-title">Charge Configuration</div>
+            <div class="radio-card-group">
+              <div class="radio-card" id="chargeNone" onclick="selectCharge('none')">
+                <label><input type="radio" name="chargeMode" value="none" id="chargeRadioNone">
+                  <div><div class="rc-title">No Charge</div><div class="rc-sub">Customers pay the exact invoice amount</div></div>
+                </label>
+              </div>
+              <div class="radio-card" id="chargeFixed" onclick="selectCharge('fixed')">
+                <label><input type="radio" name="chargeMode" value="fixed" id="chargeRadioFixed">
+                  <div>
+                    <div class="rc-title">Fixed Amount</div><div class="rc-sub">Add a flat fee to every invoice</div>
+                    <div class="rc-body mt-12">
+                      <div class="form-group"><label class="form-label">Amount ($)</label><input class="form-control" type="number" id="chargeValueFixed" step="0.01" placeholder="0.50" oninput="updateChargePreview()"></div>
+                    </div>
+                  </div>
+                </label>
+              </div>
+              <div class="radio-card" id="chargePercent" onclick="selectCharge('percent')">
+                <label><input type="radio" name="chargeMode" value="percent" id="chargeRadioPercent">
+                  <div>
+                    <div class="rc-title">Percentage</div><div class="rc-sub">Add a percentage fee based on invoice amount</div>
+                    <div class="rc-body mt-12">
+                      <div class="form-group"><label class="form-label">Percentage (%)</label><input class="form-control" type="number" id="chargeValuePercent" step="0.1" placeholder="2.5" oninput="updateChargePreview()"></div>
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+            <button class="btn btn-primary mt-16" onclick="saveCharge()">Save Charge Settings</button>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Live Preview</div>
+            <div class="charge-preview">
+              <div class="charge-row"><span>Base Invoice</span><span>$100.00</span></div>
+              <div class="charge-row"><span>Transaction Charge</span><span id="chargePreviewAmount">$0.00</span></div>
+              <div class="charge-row"><span>Total Invoice</span><span id="chargePreviewTotal">$100.00</span></div>
+            </div>
+            <div class="alert alert-info mt-16">
+              This charge is applied to all invoices generated through your payment links, unless overridden per user.
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /layout -->
+
+<!-- ─── MODALS ───────────────────────────────────────── -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+  <div class="modal" id="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="modalTitle">—</div>
+      <span class="modal-close" onclick="closeModal()">✕</span>
+    </div>
+    <div id="modalBody"></div>
+    <div class="modal-footer" id="modalFooter"></div>
+  </div>
+</div>
+
+<script src="/js/qrcode.min.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>

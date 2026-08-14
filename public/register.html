@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Register — Lightning Pay</title>
+  <link rel="stylesheet" href="/css/app.css">
+  <style>
+    body { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--bg-primary); position: relative; overflow: hidden; }
+    body::before { content: ''; position: fixed; top: -50%; left: -50%; width: 200%; height: 200%; background: radial-gradient(ellipse at 40% 40%, rgba(139,92,246,0.12) 0%, transparent 50%); pointer-events: none; }
+    .auth-card { width: 100%; max-width: 440px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 40px; box-shadow: var(--shadow-lg); position: relative; z-index: 1; }
+    .auth-logo { text-align: center; margin-bottom: 28px; }
+    .auth-logo .logo-icon { font-size: 40px; display: block; margin-bottom: 8px; }
+    .auth-logo h1 { font-size: 24px; font-weight: 800; background: linear-gradient(135deg, #fff, #94a3b8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .auth-logo p { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+    .btn-auth { width: 100%; padding: 12px; font-size: 15px; }
+    .auth-footer { text-align: center; margin-top: 20px; font-size: 13px; color: var(--text-muted); }
+  </style>
+</head>
+<body>
+<div class="auth-card">
+  <div class="auth-logo">
+    <span class="logo-icon">⚡</span>
+    <h1>Create Account</h1>
+    <p>Join Lightning Pay as a Reseller</p>
+  </div>
+
+  <div class="alert alert-danger error-msg" id="errorMsg" style="display:none"></div>
+
+  <div class="form-group">
+    <label class="form-label">Username</label>
+    <input class="form-control" type="text" id="username" placeholder="your-username">
+  </div>
+  <div class="form-group">
+    <label class="form-label">Email Address</label>
+    <input class="form-control" type="email" id="email" placeholder="you@domain.com">
+  </div>
+  <div class="form-group">
+    <label class="form-label">Password</label>
+    <input class="form-control" type="password" id="password" placeholder="Minimum 6 characters">
+  </div>
+
+  <button class="btn btn-primary btn-auth" id="regBtn" onclick="register()">Create Reseller Account</button>
+
+  <div class="auth-footer">Already have an account? <a href="/login" style="color:var(--accent);font-weight:600">Sign in</a></div>
+</div>
+
+<script>
+async function register() {
+    const username = document.getElementById('username').value.trim();
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+    const btn = document.getElementById('regBtn');
+    const err = document.getElementById('errorMsg');
+    err.style.display = 'none';
+
+    if (!username || !email || !password) { err.textContent = 'All fields required'; err.style.display = 'flex'; return; }
+
+    btn.disabled = true; btn.textContent = 'Creating account...';
+
+    const resp = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, email, password })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+        err.textContent = data.error; err.style.display = 'flex';
+        btn.disabled = false; btn.textContent = 'Create Reseller Account';
+        return;
+    }
+    window.location.href = '/login';
+}
+</script>
+</body>
+</html>

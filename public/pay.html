@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title id="pageTitle">Cash App — Scan to Pay</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --cash-green: #00d632;
+      --cash-green-hover: #00ea37;
+      --bg-dark: #090c10;
+      --card-dark: #141b26;
+      --card-border: rgba(255, 255, 255, 0.08);
+      --text-main: #ffffff;
+      --text-muted: #7b8a9e;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #090c10;
+      background: radial-gradient(circle at 50% 20%, #15202e 0%, #090c10 80%);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* ─── MAIN CARD ──────────────────────────────── */
+    .cash-card {
+      width: 100%;
+      max-width: 380px;
+      background: var(--card-dark);
+      border: 1px solid var(--card-border);
+      border-radius: 32px;
+      padding: 24px 22px 24px;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.85), 0 0 40px rgba(0, 214, 50, 0.1);
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s ease;
+    }
+
+    /* Top Brand Header */
+    .brand-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .brand-icon-box {
+      width: 44px;
+      height: 44px;
+      background: var(--cash-green);
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      font-weight: 900;
+      color: #ffffff;
+      box-shadow: 0 4px 16px rgba(0, 214, 50, 0.4);
+      flex-shrink: 0;
+    }
+    .brand-icon-box img { width: 100%; height: 100%; object-fit: cover; border-radius: 14px; }
+
+    .brand-titles { flex: 1; }
+    .brand-name {
+      font-size: 22px;
+      font-weight: 800;
+      color: #ffffff;
+      letter-spacing: -0.5px;
+      line-height: 1.1;
+    }
+    .brand-tagline {
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--cash-green);
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      margin-top: 3px;
+    }
+
+    /* ─── 1. KEYPAD ENTRY SCREEN ────────────────── */
+    .amount-section {
+      text-align: center;
+      padding: 12px 0 18px;
+    }
+    .amount-value {
+      font-size: 54px;
+      font-weight: 900;
+      color: var(--cash-green);
+      line-height: 1;
+      letter-spacing: -2px;
+    }
+    .amount-fiat-label {
+      font-size: 10.5px;
+      font-weight: 700;
+      color: var(--text-muted);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-top: 6px;
+    }
+    .amount-range-hint {
+      font-size: 11px;
+      color: rgba(255, 255, 255, 0.4);
+      margin-top: 4px;
+    }
+
+    .keypad-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .k-key {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 16px;
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      font-weight: 700;
+      color: #ffffff;
+      cursor: pointer;
+      transition: all 0.1s ease;
+    }
+    .k-key:hover { background: rgba(255, 255, 255, 0.09); }
+    .k-key:active {
+      background: rgba(0, 214, 50, 0.2);
+      border-color: var(--cash-green);
+      transform: scale(0.95);
+    }
+
+    .btn-pay-now {
+      width: 100%;
+      height: 54px;
+      background: var(--cash-green);
+      color: #041207;
+      font-size: 18px;
+      font-weight: 800;
+      border: none;
+      border-radius: 18px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: 0 8px 24px rgba(0, 214, 50, 0.35);
+      transition: all 0.15s ease;
+    }
+    .btn-pay-now:hover {
+      background: var(--cash-green-hover);
+      transform: translateY(-1px);
+      box-shadow: 0 10px 28px rgba(0, 214, 50, 0.45);
+    }
+    .btn-pay-now:active { transform: scale(0.98); }
+    .btn-pay-now:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    /* ─── 2. "OPENING CASH APP..." TRANSITION ─────── */
+    .opening-screen {
+      display: none;
+      text-align: center;
+      padding: 36px 12px;
+      animation: fadeIn 0.25s ease-out;
+    }
+    .opening-screen.active { display: block; }
+    .cashapp-pulse-icon {
+      width: 72px;
+      height: 72px;
+      background: var(--cash-green);
+      border-radius: 22px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 40px;
+      font-weight: 900;
+      color: #ffffff;
+      box-shadow: 0 0 30px rgba(0, 214, 50, 0.6);
+      margin-bottom: 20px;
+      animation: pulseGlow 1.2s infinite alternate;
+    }
+    @keyframes pulseGlow {
+      0% { transform: scale(0.95); box-shadow: 0 0 20px rgba(0, 214, 50, 0.4); }
+      100% { transform: scale(1.05); box-shadow: 0 0 40px rgba(0, 214, 50, 0.8); }
+    }
+    .opening-title {
+      font-size: 20px;
+      font-weight: 800;
+      color: #ffffff;
+      margin-bottom: 6px;
+    }
+    .opening-sub {
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.4;
+      margin-bottom: 20px;
+    }
+
+    /* ─── 3. CASH APP QR SCANNER VIEW ───────────── */
+    .qr-screen {
+      display: none;
+      animation: fadeIn 0.3s ease-out;
+    }
+    .qr-screen.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
+
+    .qr-dark-card {
+      background: #0d121a;
+      background: linear-gradient(180deg, #101622 0%, #0b0f17 100%);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 28px;
+      padding: 22px;
+      margin-bottom: 16px;
+      box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.06), 0 16px 40px rgba(0, 0, 0, 0.6);
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .qr-wrapper {
+      position: relative;
+      display: inline-block;
+      width: 100%;
+      max-width: 250px;
+      line-height: 0;
+    }
+    .qr-wrapper img {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 12px;
+      filter: drop-shadow(0 0 12px rgba(255, 255, 255, 0.06));
+    }
+
+    /* Cash App green $ badge in the exact center of QR code */
+    .qr-center-logo {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 46px;
+      height: 46px;
+      background: var(--cash-green);
+      border: 3.5px solid #0d121a;
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      font-weight: 900;
+      color: #041207;
+      box-shadow: 0 4px 16px rgba(0, 214, 50, 0.5);
+      pointer-events: none;
+    }
+
+    /* Green Cash App instruction / Action bar */
+    .btn-cash-instruction {
+      width: 100%;
+      background: var(--cash-green);
+      color: #ffffff;
+      border: none;
+      border-radius: 16px;
+      padding: 12px 14px;
+      text-align: center;
+      font-size: 14px;
+      font-weight: 800;
+      line-height: 1.35;
+      cursor: pointer;
+      box-shadow: 0 6px 20px rgba(0, 214, 50, 0.3);
+      margin-bottom: 10px;
+      transition: all 0.15s ease;
+      display: block;
+    }
+    .btn-cash-instruction:hover {
+      background: var(--cash-green-hover);
+      transform: translateY(-1px);
+    }
+    .btn-cash-instruction:active { transform: scale(0.98); }
+
+    .sub-notice {
+      text-align: center;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+
+    .inv-details-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.04);
+      border-radius: 14px;
+      padding: 10px 14px;
+      margin-bottom: 12px;
+      font-size: 13px;
+    }
+    .inv-amount-tag { font-weight: 800; color: var(--cash-green); font-size: 15px; }
+
+    .action-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .btn-outline-action {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+      font-size: 12px;
+      font-weight: 700;
+      border-radius: 12px;
+      padding: 10px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-outline-action:hover { background: rgba(255, 255, 255, 0.1); }
+
+    .status-countdown {
+      text-align: center;
+      font-size: 11.5px;
+      color: var(--text-muted);
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    /* ─── 4. SUCCESS SCREEN ─────────────────────── */
+    .success-view {
+      display: none;
+      text-align: center;
+      padding: 30px 10px;
+      animation: fadeIn 0.3s ease;
+    }
+    .success-view.active { display: block; }
+    .success-circle {
+      width: 80px;
+      height: 80px;
+      background: var(--cash-green);
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 40px;
+      color: #041207;
+      margin-bottom: 16px;
+      box-shadow: 0 10px 30px rgba(0, 214, 50, 0.4);
+    }
+    .success-title {
+      font-size: 24px;
+      font-weight: 900;
+      color: #ffffff;
+      margin-bottom: 6px;
+    }
+    .success-sub {
+      font-size: 13.5px;
+      color: var(--text-muted);
+    }
+
+    .error-msg-box {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #f87171;
+      border-radius: 12px;
+      padding: 8px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      text-align: center;
+      margin-bottom: 12px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+
+<div class="cash-card">
+
+  <!-- ─── TOP BRAND HEADER ──────────────────────── -->
+  <div class="brand-header">
+    <div class="brand-icon-box" id="headerLogo">$</div>
+    <div class="brand-titles">
+      <div class="brand-name" id="brandTitle">Cash App</div>
+      <div class="brand-tagline">SCAN TO PAY</div>
+    </div>
+  </div>
+
+  <div class="error-msg-box" id="errorBox"></div>
+
+  <!-- ─── 1. KEYPAD AMOUNT ENTRY ────────────────── -->
+  <div id="keypadScreen">
+    <div class="amount-section">
+      <div class="amount-value" id="amountDisplay">$0</div>
+      <div class="amount-fiat-label">United States Dollar</div>
+      <div class="amount-range-hint" id="amountRangeHint"></div>
+    </div>
+
+    <div class="keypad-grid">
+      <div class="k-key" onclick="enterKey('1')">1</div>
+      <div class="k-key" onclick="enterKey('2')">2</div>
+      <div class="k-key" onclick="enterKey('3')">3</div>
+      <div class="k-key" onclick="enterKey('4')">4</div>
+      <div class="k-key" onclick="enterKey('5')">5</div>
+      <div class="k-key" onclick="enterKey('6')">6</div>
+      <div class="k-key" onclick="enterKey('7')">7</div>
+      <div class="k-key" onclick="enterKey('8')">8</div>
+      <div class="k-key" onclick="enterKey('9')">9</div>
+      <div class="k-key" onclick="enterKey('.')">.</div>
+      <div class="k-key" onclick="enterKey('0')">0</div>
+      <div class="k-key" onclick="backspaceKey()">⌫</div>
+    </div>
+
+    <button class="btn-pay-now" id="submitBtn" onclick="startPaymentFlow()">
+      Pay
+    </button>
+  </div>
+
+  <!-- ─── 2. CASH APP QR SCANNER SCREEN ─────────── -->
+  <div class="qr-screen" id="qrScreen">
+    
+    <!-- Dark QR Container matching Cash App dark mode -->
+    <div class="qr-dark-card">
+      <div class="qr-wrapper">
+        <img id="qrImg" src="" alt="Cash App QR Code">
+        <!-- Centered Green Cash App Logo on QR -->
+        <div class="qr-center-logo">$</div>
+      </div>
+    </div>
+
+    <!-- Green Cash App Instruction / Deep Link Button -->
+    <button class="btn-cash-instruction" onclick="triggerCashApp()">
+      📲 Cash App ➔ Bitcoin ➔<br>Send ➔ Scan QR
+    </button>
+
+    <div class="sub-notice">
+      Only send Bitcoin (BTC) to this address
+    </div>
+
+    <div class="inv-details-row">
+      <span style="color:var(--text-muted)">Amount Due:</span>
+      <span class="inv-amount-tag" id="invTotalTag">$0.00</span>
+    </div>
+
+    <div class="action-grid">
+      <button class="btn-outline-action" onclick="triggerCashApp()">
+        ⚡ Open Cash App
+      </button>
+      <button class="btn-outline-action" id="copyInvoiceBtn" onclick="copyInvoiceData()">
+        📋 Copy Invoice
+      </button>
+    </div>
+
+    <div class="status-countdown" id="statusLine">
+      ⏳ Waiting for payment... (<span id="timerDigits">15:00</span>)
+    </div>
+
+    <button class="btn-outline-action" style="width:100%" onclick="backToKeypad()">
+      ← Enter New Amount
+    </button>
+  </div>
+
+  <!-- ─── 4. SUCCESS SCREEN ─────────────────────── -->
+  <div class="success-view" id="successScreen">
+    <div class="success-circle">✓</div>
+    <div class="success-title">Payment Confirmed!</div>
+    <div class="success-sub">Bitcoin Lightning payment received successfully.</div>
+    <div style="margin-top:24px">
+      <button class="btn-pay-now" onclick="location.reload()">
+        Done
+      </button>
+    </div>
+  </div>
+
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const slug = location.pathname.split('/pay/')[1];
+let linkMeta = null;
+let currentVal = '';
+let invoicePayload = null;
+let timerRef = null;
+let pollRef = null;
+let fallbackTimeout = null;
+
+// ─── INITIALIZATION ────────────────────────────────────────────
+async function init() {
+  try {
+    const res = await fetch(`/api/pay/${slug}/info`);
+    if (!res.ok) {
+      showErr('Payment link not found');
+      return;
+    }
+    linkMeta = await res.json();
+
+    document.getElementById('pageTitle').textContent = `${linkMeta.brand_name || 'Cash App'} — Scan to Pay`;
+    document.getElementById('brandTitle').textContent = linkMeta.brand_name || 'Cash App';
+
+    if (linkMeta.logo_path) {
+      document.getElementById('headerLogo').innerHTML = `<img src="${linkMeta.logo_path}">`;
+    }
+
+    if (linkMeta.amount_type === 'fixed') {
+      currentVal = linkMeta.fixed_amount.toString();
+      updateDisplay();
+      document.querySelectorAll('.k-key').forEach(k => {
+        k.style.opacity = '0.25';
+        k.style.pointerEvents = 'none';
+      });
+    } else {
+      document.getElementById('amountRangeHint').textContent = `Min $${linkMeta.min_amount} · Max $${linkMeta.max_amount}`;
+    }
+  } catch(e) {
+    showErr('Failed to load link');
+  }
+}
+
+// ─── KEYPAD LOGIC ──────────────────────────────────────────────
+function enterKey(num) {
+  if (linkMeta?.amount_type === 'fixed') return;
+  if (num === '.' && currentVal.includes('.')) return;
+  if (currentVal.includes('.') && currentVal.split('.')[1].length >= 2) return;
+  if (currentVal === '0' && num !== '.') currentVal = num;
+  else currentVal += num;
+  updateDisplay();
+}
+
+function backspaceKey() {
+  if (linkMeta?.amount_type === 'fixed') return;
+  currentVal = currentVal.slice(0, -1);
+  updateDisplay();
+}
+
+function updateDisplay() {
+  document.getElementById('amountDisplay').textContent = currentVal ? `$${currentVal}` : '$0';
+}
+
+// ─── PAYMENT FLOW: INSTANT QR DISPLAY ─────────────────────────
+async function startPaymentFlow() {
+  const amt = parseFloat(currentVal);
+  if (!amt || amt <= 0) {
+    showErr('Please enter an amount');
+    return;
+  }
+  if (linkMeta && (amt < linkMeta.min_amount || amt > linkMeta.max_amount)) {
+    showErr(`Amount must be between $${linkMeta.min_amount} and $${linkMeta.max_amount}`);
+    return;
+  }
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = 'Generating...';
+
+  try {
+    const res = await fetch(`/api/pay/${slug}/invoice`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ amount: amt })
+    });
+    const inv = await res.json();
+    if (!res.ok) throw new Error(inv.error || 'Failed to generate invoice');
+
+    invoicePayload = inv;
+
+    // Immediately show the Dark QR code screen
+    renderQRScreen(inv);
+
+  } catch(e) {
+    showErr(e.message);
+    btn.disabled = false;
+    btn.textContent = 'Pay';
+  }
+}
+
+function renderQRScreen(inv) {
+  const keypad = document.getElementById('keypadScreen');
+  const qr = document.getElementById('qrScreen');
+  if (keypad) keypad.style.display = 'none';
+  if (qr) qr.classList.add('active');
+
+  const totalTag = document.getElementById('invTotalTag');
+  if (totalTag) totalTag.textContent = `$${parseFloat(inv.total_usd).toFixed(2)}`;
+
+  const qrImg = document.getElementById('qrImg');
+  if (qrImg && inv.qr_code) {
+    qrImg.src = inv.qr_code;
+  }
+
+  // 15 Min countdown
+  let totalSecs = inv.expires_in || 900;
+  clearInterval(timerRef);
+  timerRef = setInterval(() => {
+    totalSecs--;
+    const m = Math.floor(totalSecs / 60);
+    const s = totalSecs % 60;
+    const digits = document.getElementById('timerDigits');
+    if (digits) digits.textContent = `${m}:${s.toString().padStart(2, '0')}`;
+    if (totalSecs <= 0) {
+      clearInterval(timerRef);
+      const statusLine = document.getElementById('statusLine');
+      if (statusLine) statusLine.textContent = '⌛ Invoice expired';
+    }
+  }, 1000);
+
+  // Poll for payment confirmation
+  clearInterval(pollRef);
+  pollRef = setInterval(async () => {
+    try {
+      const res = await fetch(`/api/pay/invoice/${inv.payment_id}/status`);
+      const data = await res.json();
+      if (data.status === 'paid') {
+        clearInterval(pollRef);
+        clearInterval(timerRef);
+        showPaidSuccess();
+      }
+    } catch(e) {}
+  }, 3000);
+}
+
+// ─── CASH APP LAUNCH & DEEP LINKS ──────────────────────────────
+function triggerCashApp() {
+  if (!invoicePayload) return;
+  const uri = invoicePayload.uri;
+  const payreq = invoicePayload.lightning_invoice;
+
+  // Triggers Cash App & Lightning protocol handler
+  if (uri) {
+    window.location.href = uri;
+  } else if (payreq) {
+    window.location.href = `lightning:${payreq}`;
+  } else if (invoicePayload.hosted_checkout) {
+    window.location.href = invoicePayload.hosted_checkout;
+  }
+}
+
+function copyInvoiceData() {
+  if (!invoicePayload) return;
+  const text = invoicePayload.lightning_invoice || invoicePayload.uri;
+  if (text) {
+    navigator.clipboard.writeText(text);
+    const btn = document.getElementById('copyInvoiceBtn');
+    btn.textContent = '✅ Copied!';
+    setTimeout(() => { btn.textContent = '📋 Copy Invoice'; }, 2000);
+  }
+}
+
+function backToKeypad() {
+  clearInterval(timerRef);
+  clearInterval(pollRef);
+  document.getElementById('qrScreen').classList.remove('active');
+  document.getElementById('keypadScreen').style.display = 'block';
+  document.getElementById('submitBtn').disabled = false;
+  document.getElementById('submitBtn').textContent = 'Pay';
+}
+
+function showPaidSuccess() {
+  document.getElementById('qrScreen').classList.remove('active');
+  document.getElementById('successScreen').classList.add('active');
+}
+
+function showErr(msg) {
+  const el = document.getElementById('errorBox');
+  el.textContent = '⚠️ ' + msg;
+  el.style.display = 'block';
+  setTimeout(() => { el.style.display = 'none'; }, 4000);
+}
+
+init();
+</script>
+</body>
+</html>
