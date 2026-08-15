@@ -707,7 +707,7 @@ let timerRef = null;
 
 async function init() {
   try {
-    const res = await fetch(`/api/pay/link/${slug}`);
+    const res = await fetch(`/api/pay/${encodeURIComponent(slug)}/info`);
     if (!res.ok) {
       showErr('Payment link not found or inactive');
       return;
@@ -804,10 +804,10 @@ async function startPaymentFlow() {
   submitBtn.textContent = 'Creating invoice...';
 
   try {
-    const res = await fetch('/api/pay/invoice', {
+    const res = await fetch(`/api/pay/${encodeURIComponent(slug)}/invoice`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug, amount_usd: amt })
+      body: JSON.stringify({ amount: amt })
     });
 
     const data = await res.json();
