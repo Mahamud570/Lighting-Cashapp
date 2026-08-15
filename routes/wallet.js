@@ -38,6 +38,7 @@ router.get('/api/wallet', auth, async (req, res) => {
             alby_access_token: r.alby_access_token ? '***' + r.alby_access_token.slice(-4) : null,
             // Binance
             binance_api_key: r.binance_api_key ? '***' + r.binance_api_key.slice(-4) : null,
+            binance_api_secret: r.binance_api_secret ? '***' + r.binance_api_secret.slice(-4) : null,
             binance_auto_sweep_enabled: !!r.binance_auto_sweep_enabled,
             binance_sweep_threshold_usd: r.binance_sweep_threshold_usd || 0,
             binance_sweep_type: r.binance_sweep_type || 'lightning',

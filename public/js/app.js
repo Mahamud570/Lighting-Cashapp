@@ -217,13 +217,26 @@ async function loadWallet() {
             // Pre-fill fields
             if (data.wallet_email) document.getElementById('walletEmail').value = data.wallet_email;
             if (data.lnbits_url) document.getElementById('lnbitsUrl').value = data.lnbits_url;
+            if (data.lnbits_invoice_key) document.getElementById('lnbitsInvoiceKey').value = data.lnbits_invoice_key;
+            if (data.lnbits_admin_key) document.getElementById('lnbitsAdminKey').value = data.lnbits_admin_key;
+            
+            if (data.blink_api_key) document.getElementById('blinkApiKey').value = data.blink_api_key;
             if (data.blink_wallet_id) document.getElementById('blinkWalletId').value = data.blink_wallet_id;
+            
+            if (data.alby_access_token) document.getElementById('albyAccessToken').value = data.alby_access_token;
+            if (data.alby_nwc_string) document.getElementById('albyNwcString').value = data.alby_nwc_string;
+            
+            if (data.opennode_api_key) document.getElementById('opennodeKey').value = data.opennode_api_key;
             if (data.opennode_env) document.getElementById('opennodeEnv').value = data.opennode_env;
+            
             if (data.btcpay_url) document.getElementById('btcpayUrl').value = data.btcpay_url;
             if (data.btcpay_store_id) document.getElementById('btcpayStoreId').value = data.btcpay_store_id;
+            if (data.btcpay_api_key) document.getElementById('btcpayKey').value = data.btcpay_api_key;
 
             // Pre-fill Binance & Payout fields
             if (document.getElementById('binanceAutoSweepToggle')) {
+                if (data.binance_api_key) document.getElementById('binanceApiKey').value = data.binance_api_key;
+                if (data.binance_api_secret) document.getElementById('binanceApiSecret').value = data.binance_api_secret;
                 document.getElementById('binanceAutoSweepToggle').checked = data.binance_auto_sweep_enabled;
                 document.getElementById('binanceSweepThreshold').value = data.binance_sweep_threshold_usd || 0;
                 document.getElementById('binanceSweepType').value = data.binance_sweep_type || 'lightning';
@@ -231,7 +244,7 @@ async function loadWallet() {
                 if (data.auto_payout_address) document.getElementById('autoPayoutAddress').value = data.auto_payout_address;
                 if (data.auto_payout_percent) document.getElementById('autoPayoutPercent').value = data.auto_payout_percent;
                 if (document.getElementById('tgChatId') && data.telegram_chat_id) document.getElementById('tgChatId').value = data.telegram_chat_id;
-                if (document.getElementById('tgBotToken') && data.telegram_bot_token) document.getElementById('tgBotToken').placeholder = data.telegram_bot_token;
+                if (document.getElementById('tgBotToken') && data.telegram_bot_token) document.getElementById('tgBotToken').value = data.telegram_bot_token;
             }
         }
     } catch(e) {}
