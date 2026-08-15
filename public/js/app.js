@@ -33,6 +33,10 @@ function initSocket() {
             if (currentPage === 'dashboard') loadDashboard();
             if (currentPage === 'payments') loadPayments();
         });
+        socket.on('sweep:update', (data) => {
+            showToast(`🔄 Auto-Sweep ${data.status}! $${data.amount_usd} → ${data.destination}`, data.status === 'completed' ? 'success' : 'warning');
+            if (currentPage === 'sweeps') loadSweeps();
+        });
         socket.on('connect', () => {
             document.getElementById('liveIndicator').style.display = 'flex';
         });
@@ -53,10 +57,10 @@ function navigate(page) {
     currentPage = page;
 
     const titles = {
-        dashboard: 'Dashboard', wallet: 'Lightning Wallet', themes: 'Payment Themes',
-        links: 'Payment Links', scancodes: 'My Scan Code', payments: 'Payments',
-        activity: 'System Activity', users: 'Users', security: 'Security',
-        devices: 'Device Login', charge: 'Transaction Charge'
+        dashboard: 'Dashboard', wallet: 'Lightning Wallet', sweeps: 'Auto-Sweeps & Binance',
+        themes: 'Payment Themes', links: 'Payment Links', scancodes: 'My Scan Code',
+        payments: 'Payments', activity: 'System Activity', users: 'Users',
+        security: 'Security', devices: 'Device Login', charge: 'Transaction Charge'
     };
     document.getElementById('topbarTitle').textContent = titles[page] || page;
 
@@ -68,6 +72,7 @@ function navigate(page) {
     // Lazy-load page data
     const loaders = {
         wallet: loadWallet,
+        sweeps: loadSweeps,
         themes: loadThemes,
         links: loadLinks,
         scancodes: loadScanCodes,
@@ -199,9 +204,23 @@ async function loadWallet() {
 
             // Pre-fill fields
             if (data.wallet_email) document.getElementById('walletEmail').value = data.wallet_email;
+            if (data.lnbits_url) document.getElementById('lnbitsUrl').value = data.lnbits_url;
+            if (data.blink_wallet_id) document.getElementById('blinkWalletId').value = data.blink_wallet_id;
             if (data.opennode_env) document.getElementById('opennodeEnv').value = data.opennode_env;
             if (data.btcpay_url) document.getElementById('btcpayUrl').value = data.btcpay_url;
             if (data.btcpay_store_id) document.getElementById('btcpayStoreId').value = data.btcpay_store_id;
+
+            // Pre-fill Binance & Payout fields
+            if (document.getElementById('binanceAutoSweepToggle')) {
+                document.getElementById('binanceAutoSweepToggle').checked = data.binance_auto_sweep_enabled;
+                document.getElementById('binanceSweepThreshold').value = data.binance_sweep_threshold_usd || 0;
+                document.getElementById('binanceSweepType').value = data.binance_sweep_type || 'lightning';
+                document.getElementById('autoPayoutToggle').checked = data.auto_payout_enabled;
+                if (data.auto_payout_address) document.getElementById('autoPayoutAddress').value = data.auto_payout_address;
+                if (data.auto_payout_percent) document.getElementById('autoPayoutPercent').value = data.auto_payout_percent;
+                if (document.getElementById('tgChatId') && data.telegram_chat_id) document.getElementById('tgChatId').value = data.telegram_chat_id;
+                if (document.getElementById('tgBotToken') && data.telegram_bot_token) document.getElementById('tgBotToken').placeholder = data.telegram_bot_token;
+            }
         }
     } catch(e) {}
 }
@@ -209,14 +228,109 @@ async function loadWallet() {
 function selectProvider(type) {
     selectedProvider = type;
     document.querySelectorAll('.radio-card').forEach(c => c.classList.remove('selected'));
-    const map = { email: 'rcEmail', opennode: 'rcOpennode', btcpay: 'rcBtcpay' };
+    const map = {
+        lnbits: 'rcLnbits',
+        blink: 'rcBlink',
+        alby: 'rcAlby',
+        email: 'rcEmail',
+        opennode: 'rcOpennode',
+        btcpay: 'rcBtcpay'
+    };
     if (map[type]) {
-        document.getElementById(map[type]).classList.add('selected');
+        const el = document.getElementById(map[type]);
+        if (el) el.classList.add('selected');
         const radio = document.getElementById('radio' + type.charAt(0).toUpperCase() + type.slice(1));
         if (radio) radio.checked = true;
     }
 }
 
+// LNbits
+async function testLnbits(e) {
+    e.stopPropagation();
+    const url = document.getElementById('lnbitsUrl').value;
+    const invoice_key = document.getElementById('lnbitsInvoiceKey').value;
+    try {
+        const resp = await apiFetch('/api/wallet/lnbits/test', 'POST', { url, invoice_key });
+        showToast(`✅ LNbits Connected: ${resp.data.name} (${resp.data.balance_sats.toLocaleString()} sats)`, 'success');
+    } catch(err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function saveLnbits(e) {
+    e.stopPropagation();
+    const body = {
+        url: document.getElementById('lnbitsUrl').value,
+        invoice_key: document.getElementById('lnbitsInvoiceKey').value,
+        admin_key: document.getElementById('lnbitsAdminKey').value
+    };
+    try {
+        await apiFetch('/api/wallet/lnbits', 'POST', body);
+        showToast('LNbits wallet connected successfully!', 'success');
+        loadWallet();
+    } catch(err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// Blink
+async function testBlink(e) {
+    e.stopPropagation();
+    const api_key = document.getElementById('blinkApiKey').value;
+    try {
+        const resp = await apiFetch('/api/wallet/blink/test', 'POST', { api_key });
+        if (resp.data.wallet_id) document.getElementById('blinkWalletId').value = resp.data.wallet_id;
+        showToast(`✅ Blink Connected: ${resp.data.username || 'Wallet'} (${resp.data.balance_sats.toLocaleString()} sats)`, 'success');
+    } catch(err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function saveBlink(e) {
+    e.stopPropagation();
+    const body = {
+        api_key: document.getElementById('blinkApiKey').value,
+        wallet_id: document.getElementById('blinkWalletId').value
+    };
+    try {
+        const resp = await apiFetch('/api/wallet/blink', 'POST', body);
+        if (resp.data?.wallet_id) document.getElementById('blinkWalletId').value = resp.data.wallet_id;
+        showToast('Blink wallet connected successfully!', 'success');
+        loadWallet();
+    } catch(err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// Alby
+async function testAlby(e) {
+    e.stopPropagation();
+    const access_token = document.getElementById('albyAccessToken').value;
+    const nwc_string = document.getElementById('albyNwcString').value;
+    try {
+        const resp = await apiFetch('/api/wallet/alby/test', 'POST', { access_token, nwc_string });
+        showToast(`✅ Alby Connected: ${resp.data.lightning_address || 'Wallet'} (${resp.data.balance_sats} sats)`, 'success');
+    } catch(err) {
+        showToast(err.message, 'error');
+    }
+}
+
+async function saveAlby(e) {
+    e.stopPropagation();
+    const body = {
+        access_token: document.getElementById('albyAccessToken').value,
+        nwc_string: document.getElementById('albyNwcString').value
+    };
+    try {
+        await apiFetch('/api/wallet/alby', 'POST', body);
+        showToast('Alby connected successfully!', 'success');
+        loadWallet();
+    } catch(err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// Email
 async function saveEmailWallet(e) {
     e.stopPropagation();
     const email = document.getElementById('walletEmail').value;
@@ -225,16 +339,17 @@ async function saveEmailWallet(e) {
     btn.textContent = 'Saving...';
     try {
         await apiFetch('/api/wallet/email', 'POST', { email });
-        showToast('Lightning wallet email saved!', 'success');
+        showToast('Lightning Address saved!', 'success');
         loadWallet();
     } catch(err) {
         showToast(err.message, 'error');
     } finally {
         btn.disabled = false;
-        btn.textContent = 'Save Wallet Email';
+        btn.textContent = 'Save Lightning Address';
     }
 }
 
+// OpenNode
 async function saveOpennode(e) {
     e.stopPropagation();
     const api_key = document.getElementById('opennodeKey').value;
@@ -252,6 +367,7 @@ async function saveOpennode(e) {
     }
 }
 
+// BTCPay
 async function testBtcpay(e) {
     e.stopPropagation();
     const url = document.getElementById('btcpayUrl').value;
@@ -280,6 +396,178 @@ async function saveBtcpay(e) {
         loadWallet();
     } catch(err) {
         showToast(err.message, 'error');
+    }
+}
+
+// ─── AUTO-SWEEPS & BINANCE ─────────────────────────────────────
+async function loadSweeps() {
+    try {
+        // Load current wallet/sweep settings
+        await loadWallet();
+
+        const data = await apiFetch('/api/sweeps');
+        const tbody = document.getElementById('sweepsTableBody');
+        const list = data.sweeps || [];
+        document.getElementById('sweepTotalCount').textContent = `${list.length} records`;
+
+        if (!list.length) {
+            tbody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">🔄</div><div class="empty-text">No sweeps or payouts executed yet</div></div></td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = list.map(s => {
+            const typeBadges = {
+                binance_lightning: '<span class="badge badge-green">Binance LN</span>',
+                binance_onchain: '<span class="badge badge-yellow">Binance On-Chain</span>',
+                instant_ln_payout: '<span class="badge badge-purple">Instant LN Payout</span>'
+            };
+            const statusBadges = {
+                completed: '<span class="badge badge-green">Swept to Binance</span>',
+                pending: '<span class="badge badge-yellow">Pending</span>',
+                held: '<span class="badge badge-yellow" title="' + (s.error_message || 'Held in wallet') + '">Held in Wallet (Below Min)</span>',
+                failed: '<span class="badge badge-red" title="' + (s.error_message || '') + '">Failed</span>'
+            };
+
+            const txDisplay = s.preimage || s.txid || (s.error_message ? `<span class="text-sub" style="font-size:11px;" title="${s.error_message}">ℹ️ ${truncate(s.error_message, 28)}</span>` : '—');
+
+            return `
+                <tr>
+                    <td><span class="text-sub" style="font-size:12px;">${fmtDate(s.created_at)}</span></td>
+                    <td>${typeBadges[s.sweep_type] || s.sweep_type}</td>
+                    <td><strong>$${parseFloat(s.amount_usd).toFixed(2)}</strong></td>
+                    <td><code>${(s.amount_sats || 0).toLocaleString()} sats</code></td>
+                    <td><span class="font-mono text-sub">${s.target_destination || 'Binance'}</span></td>
+                    <td><span class="font-mono" style="font-size:11px;">${txDisplay}</span></td>
+                    <td>${statusBadges[s.status] || s.status}</td>
+                </tr>
+            `;
+        }).join('');
+    } catch(err) {
+        showToast('Error loading sweeps: ' + err.message, 'error');
+    }
+}
+
+async function testBinanceConnection() {
+    const key = document.getElementById('binanceApiKey').value;
+    const secret = document.getElementById('binanceApiSecret').value;
+    const out = document.getElementById('binanceTestOutput');
+    out.style.display = 'block';
+    out.innerHTML = '⏳ Connecting to Binance API...';
+
+    try {
+        const resp = await apiFetch('/api/sweeps/test-binance', 'POST', { api_key: key, api_secret: secret });
+        out.innerHTML = `
+            <div style="color:var(--accent-green);font-weight:600;">✅ Binance API Connected Successfully!</div>
+            <div class="mt-4" style="color:var(--text-sub);">Spot BTC Balance: <strong>${resp.data.btc_free} BTC</strong> | USDT: <strong>${resp.data.usdt_free} USDT</strong></div>
+        `;
+        showToast('Binance API Connected!', 'success');
+    } catch(err) {
+        out.innerHTML = `<div style="color:var(--accent-red);">❌ ${err.message}</div>`;
+        showToast(err.message, 'error');
+    }
+}
+
+async function saveSweepConfig(e) {
+    const btn = (e && e.target) ? e.target : document.querySelector('button[onclick*="saveSweepConfig"]');
+    const origText = btn ? btn.textContent : 'Save Binance Settings';
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+
+    const body = {
+        binance_api_key: document.getElementById('binanceApiKey').value,
+        binance_api_secret: document.getElementById('binanceApiSecret').value,
+        binance_auto_sweep_enabled: document.getElementById('binanceAutoSweepToggle').checked,
+        binance_sweep_threshold_usd: parseFloat(document.getElementById('binanceSweepThreshold').value) || 0,
+        binance_sweep_type: document.getElementById('binanceSweepType').value,
+        auto_payout_enabled: document.getElementById('autoPayoutToggle').checked,
+        auto_payout_address: document.getElementById('autoPayoutAddress').value,
+        auto_payout_percent: parseFloat(document.getElementById('autoPayoutPercent').value) || 100
+    };
+
+    try {
+        const resp = await apiFetch('/api/sweeps/save-config', 'POST', body);
+        showToast(resp.message || 'Auto-Sweep settings saved!', 'success');
+        if (btn) btn.textContent = '✅ Saved!';
+        setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = origText; } }, 2000);
+    } catch(err) {
+        showToast(err.message, 'error');
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
+    }
+}
+
+function toggleManualDestInput() {
+    const type = document.getElementById('manualSweepType').value;
+    const group = document.getElementById('manualDestGroup');
+    group.style.display = (type === 'binance') ? 'none' : 'block';
+}
+
+async function triggerManualSweep() {
+    const destType = document.getElementById('manualSweepType').value;
+    const dest = document.getElementById('manualSweepDest').value;
+    const amount = document.getElementById('manualSweepAmount').value;
+
+    if (!amount || parseFloat(amount) <= 0) {
+        return showToast('Please enter a valid USD amount to sweep', 'warning');
+    }
+
+    try {
+        const resp = await apiFetch('/api/sweeps/manual', 'POST', {
+            destination_type: destType,
+            destination_address: dest,
+            amount_usd: amount
+        });
+        showToast(resp.message, 'success');
+        document.getElementById('manualSweepAmount').value = '';
+        loadSweeps();
+    } catch(err) {
+        showToast(err.message, 'error');
+    }
+}
+
+// ─── TELEGRAM NOTIFICATIONS ──────────────────────────────────
+async function testTelegramAlert(e) {
+    const btn = e ? e.target : null;
+    const origText = btn ? btn.textContent : 'Test Telegram Alert';
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending...'; }
+
+    const out = document.getElementById('tgTestOutput');
+    if (out) { out.style.display = 'block'; out.innerHTML = '⏳ Sending test message to Telegram...'; }
+
+    const bot_token = document.getElementById('tgBotToken').value;
+    const chat_id = document.getElementById('tgChatId').value;
+
+    try {
+        const resp = await apiFetch('/api/wallet/test-telegram', 'POST', { bot_token, chat_id });
+        if (out) {
+            out.innerHTML = `<div style="color:var(--accent-green);font-weight:600;">✅ ${resp.message} Check your Telegram app!</div>`;
+        }
+        showToast('Telegram notification sent!', 'success');
+        if (btn) btn.textContent = '✅ Sent!';
+        setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = origText; } }, 2500);
+    } catch(err) {
+        if (out) {
+            out.innerHTML = `<div style="color:var(--accent-red);font-weight:600;">❌ ${err.message}</div>`;
+        }
+        showToast(err.message, 'error');
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
+    }
+}
+
+async function saveTelegramSettings(e) {
+    const btn = e ? e.target : null;
+    const origText = btn ? btn.textContent : 'Save Telegram Settings';
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+
+    const bot_token = document.getElementById('tgBotToken').value;
+    const chat_id = document.getElementById('tgChatId').value;
+
+    try {
+        const resp = await apiFetch('/api/wallet/telegram', 'POST', { bot_token, chat_id });
+        showToast(resp.message || 'Telegram settings saved!', 'success');
+        if (btn) btn.textContent = '✅ Saved!';
+        setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = origText; } }, 2000);
+    } catch(err) {
+        showToast(err.message, 'error');
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
     }
 }
 
@@ -910,7 +1198,13 @@ function closeModal(e) {
 
 // ─── TOAST ────────────────────────────────────────────────────
 function showToast(message, type = 'info') {
-    const container = document.getElementById('toastContainer');
+    let container = document.getElementById('toastContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        container.className = 'toast-container';
+        document.body.appendChild(container);
+    }
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     const icons = { success: '✅', error: '❌', info: 'ℹ️', warning: '⚠️' };
@@ -938,7 +1232,18 @@ async function apiFetch(url, method = 'GET', body = null) {
 
 function fmtDate(d) {
     if (!d) return '—';
-    return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    try {
+        const normalized = typeof d === 'string' ? d.replace(' ', 'T') + (d.includes('Z') ? '' : 'Z') : d;
+        const date = new Date(normalized);
+        if (isNaN(date.getTime())) {
+            const fallback = new Date(d);
+            if (!isNaN(fallback.getTime())) return fallback.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            return d;
+        }
+        return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    } catch(e) {
+        return d;
+    }
 }
 
 function truncate(str, n) {

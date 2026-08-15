@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS resellers (
     password TEXT NOT NULL,
     totp_secret TEXT,
     totp_enabled INTEGER DEFAULT 0,
-    wallet_type TEXT CHECK(wallet_type IN ('email','opennode','btcpay')),
+    wallet_type TEXT CHECK(wallet_type IN ('email','opennode','btcpay','lnbits','blink','alby')),
     wallet_email TEXT,
     opennode_api_key TEXT,
     opennode_env TEXT DEFAULT 'live',
@@ -17,6 +17,27 @@ CREATE TABLE IF NOT EXISTS resellers (
     btcpay_api_key TEXT,
     btcpay_webhook_id TEXT,
     btcpay_webhook_secret TEXT,
+    -- LNbits Credentials
+    lnbits_url TEXT,
+    lnbits_invoice_key TEXT,
+    lnbits_admin_key TEXT,
+    -- Blink Credentials
+    blink_api_key TEXT,
+    blink_wallet_id TEXT,
+    -- Alby / NWC Credentials
+    alby_nwc_string TEXT,
+    alby_access_token TEXT,
+    alby_webhook_secret TEXT,
+    -- Binance Auto-Sweep Config
+    binance_api_key TEXT,
+    binance_api_secret TEXT,
+    binance_auto_sweep_enabled INTEGER DEFAULT 0,
+    binance_sweep_threshold_usd REAL DEFAULT 0,
+    binance_sweep_type TEXT DEFAULT 'lightning' CHECK(binance_sweep_type IN ('lightning','onchain')),
+    -- Instant LN Payout Config
+    auto_payout_enabled INTEGER DEFAULT 0,
+    auto_payout_address TEXT,
+    auto_payout_percent REAL DEFAULT 100,
     charge_mode TEXT DEFAULT 'none' CHECK(charge_mode IN ('none','fixed','percent')),
     charge_value REAL DEFAULT 0,
     status TEXT DEFAULT 'active' CHECK(status IN ('active','suspended')),
@@ -148,6 +169,36 @@ CREATE TABLE IF NOT EXISTS payment_themes (
     bg_color TEXT DEFAULT '#0d1117',
     is_global INTEGER DEFAULT 0,
     FOREIGN KEY (reseller_id) REFERENCES resellers(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS auto_sweeps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reseller_id INTEGER NOT NULL,
+    payment_id INTEGER,
+    sweep_type TEXT NOT NULL CHECK(sweep_type IN ('binance_lightning','binance_onchain','instant_ln_payout')),
+    amount_sats INTEGER NOT NULL,
+    amount_usd REAL NOT NULL,
+    target_destination TEXT NOT NULL,
+    txid TEXT,
+    preimage TEXT,
+    fee_sats INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending','completed','failed')),
+    error_message TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (reseller_id) REFERENCES resellers(id) ON DELETE CASCADE,
+    FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS webhook_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reseller_id INTEGER,
+    gateway TEXT NOT NULL,
+    event_id TEXT,
+    event_type TEXT,
+    payload TEXT,
+    processed INTEGER DEFAULT 0,
+    status TEXT DEFAULT 'received',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Default themes

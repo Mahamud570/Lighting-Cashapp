@@ -3,6 +3,10 @@ const router = express.Router();
 const db = require('../database/db');
 const axios = require('axios');
 const qrcode = require('qrcode');
+const LNbitsService = require('../services/lnbitsService');
+const BlinkService = require('../services/blinkService');
+const AlbyService = require('../services/albyService');
+const PayoutService = require('../services/payoutService');
 
 // Public payment page: GET /pay/:slug
 router.get('/pay/:slug', async (req, res) => {
@@ -27,7 +31,7 @@ router.get('/pay/:slug', async (req, res) => {
         );
         await db.query('UPDATE payment_links SET clicks = clicks + 1 WHERE id = ?', [link.id]);
 
-        // Serve the payment page with link data injected
+        // Serve the payment page
         res.sendFile('pay.html', { root: './public' });
     } catch (err) {
         console.error(err);
@@ -75,6 +79,9 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
         const [links] = await db.query(
             `SELECT pl.*, r.wallet_type, r.wallet_email, r.opennode_api_key, r.opennode_env,
              r.btcpay_url, r.btcpay_store_id, r.btcpay_api_key,
+             r.lnbits_url, r.lnbits_invoice_key, r.lnbits_admin_key,
+             r.blink_api_key, r.blink_wallet_id,
+             r.alby_access_token, r.alby_nwc_string,
              r.charge_mode, r.charge_value, r.id as reseller_id
              FROM payment_links pl
              LEFT JOIN resellers r ON pl.reseller_id = r.id
@@ -96,9 +103,58 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
         if (link.charge_mode === 'percent') chargeUsd = (amountUsd * parseFloat(link.charge_value)) / 100;
         const totalUsd = amountUsd + chargeUsd;
 
+        const btcPrice = await PayoutService.getBtcPrice();
+        const totalSats = Math.round((totalUsd / btcPrice) * 100000000);
+
         let invoiceData = {};
 
-        if (link.wallet_type === 'opennode') {
+        if (link.wallet_type === 'lnbits' && link.lnbits_invoice_key) {
+            const webhookUrl = `${req.protocol}://${req.get('host')}/api/webhooks/lnbits`;
+            const lnbitsRes = await LNbitsService.createInvoice({
+                url: link.lnbits_url,
+                invoiceKey: link.lnbits_invoice_key,
+                amountSats: totalSats,
+                memo: link.title || 'Cash App Payment',
+                webhookUrl
+            });
+
+            invoiceData = {
+                invoice_id: lnbitsRes.payment_hash,
+                lightning_invoice: lnbitsRes.payment_request,
+                uri: `lightning:${lnbitsRes.payment_request}`,
+                provider: 'lnbits',
+                btc_amount: totalSats / 100000000
+            };
+        } else if (link.wallet_type === 'blink' && link.blink_api_key) {
+            const blinkRes = await BlinkService.createInvoice({
+                apiKey: link.blink_api_key,
+                walletId: link.blink_wallet_id,
+                amountSats: totalSats,
+                memo: link.title || 'Cash App Payment'
+            });
+
+            invoiceData = {
+                invoice_id: blinkRes.payment_hash,
+                lightning_invoice: blinkRes.payment_request,
+                uri: `lightning:${blinkRes.payment_request}`,
+                provider: 'blink',
+                btc_amount: totalSats / 100000000
+            };
+        } else if (link.wallet_type === 'alby' && link.alby_access_token) {
+            const albyRes = await AlbyService.createInvoice({
+                accessToken: link.alby_access_token,
+                amountSats: totalSats,
+                memo: link.title || 'Cash App Payment'
+            });
+
+            invoiceData = {
+                invoice_id: albyRes.payment_hash,
+                lightning_invoice: albyRes.payment_request,
+                uri: `lightning:${albyRes.payment_request}`,
+                provider: 'alby',
+                btc_amount: totalSats / 100000000
+            };
+        } else if (link.wallet_type === 'opennode') {
             const baseUrl = link.opennode_env === 'dev' ? 'https://dev-api.opennode.com' : 'https://api.opennode.com';
             const resp = await axios.post(`${baseUrl}/v1/charges`, {
                 amount: totalUsd,
@@ -133,44 +189,19 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
                 provider: 'btcpay'
             };
         } else {
-            // Default / Email / Lightning Address (e.g. imposter@coinos.io or user@walletofsatoshi.com)
+            // Default / Email / Lightning Address (e.g. user@blink.sv or user@walletofsatoshi.com)
             const lightningAddress = link.wallet_email || 'imposter@coinos.io';
-            const [user, domain] = lightningAddress.split('@');
-
-            if (user && domain) {
-                try {
-                    // Fetch live BTC price in USD
-                    const priceRes = await axios.get('https://api.coinbase.com/v2/prices/BTC-USD/spot', { timeout: 3500 });
-                    const btcPrice = parseFloat(priceRes.data.data.amount) || 63000;
-                    const sats = Math.round((totalUsd / btcPrice) * 100000000);
-                    const millisats = sats * 1000;
-
-                    // Resolve LNURL-pay parameters
-                    const lnurlRes = await axios.get(`https://${domain}/.well-known/lnurlp/${user}`, { timeout: 4000 });
-                    const callbackUrl = lnurlRes.data.callback;
-
-                    // Request exact BOLT11 invoice
-                    const invRes = await axios.get(`${callbackUrl}?amount=${millisats}`, { timeout: 4000 });
-                    const payreq = invRes.data.pr;
-                    const verifyUrl = invRes.data.verify || null;
-
-                    invoiceData = {
-                        invoice_id: `ln_${Date.now()}`,
-                        lightning_invoice: payreq,
-                        uri: `lightning:${payreq}`,
-                        verify_url: verifyUrl,
-                        provider: 'email',
-                        btc_amount: sats / 100000000
-                    };
-                } catch(lnErr) {
-                    console.error('LNURL resolution error, falling back to manual:', lnErr.message);
-                    invoiceData = {
-                        invoice_id: `manual_${Date.now()}`,
-                        lightning_invoice: null,
-                        provider: 'email'
-                    };
-                }
-            } else {
+            try {
+                const payreq = await PayoutService.resolveLightningAddress(lightningAddress, totalSats);
+                invoiceData = {
+                    invoice_id: `ln_${Date.now()}`,
+                    lightning_invoice: payreq,
+                    uri: `lightning:${payreq}`,
+                    provider: 'email',
+                    btc_amount: totalSats / 100000000
+                };
+            } catch(lnErr) {
+                console.error('LNURL resolution error, falling back to manual:', lnErr.message);
                 invoiceData = {
                     invoice_id: `manual_${Date.now()}`,
                     lightning_invoice: null,
@@ -180,9 +211,9 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
         }
 
         const [result] = await db.query(
-            `INSERT INTO payments (link_id, reseller_id, invoice_id, provider, amount_usd, charge_usd, total_usd, lightning_invoice, verify_url, status, expires_at, payer_ip, payer_note, receiving_wallet)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now', '+15 minutes'), ?, ?, ?)`,
-            [link.id, link.reseller_id, invoiceData.invoice_id, invoiceData.provider, amountUsd, chargeUsd, totalUsd, invoiceData.lightning_invoice || null, invoiceData.verify_url || null, req.ip, note || null, link.wallet_email || link.opennode_api_key || link.btcpay_store_id]
+            `INSERT INTO payments (link_id, reseller_id, invoice_id, provider, amount_usd, charge_usd, total_usd, btc_amount, lightning_invoice, verify_url, status, expires_at, payer_ip, payer_note, receiving_wallet)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now', '+15 minutes'), ?, ?, ?)`,
+            [link.id, link.reseller_id, invoiceData.invoice_id, invoiceData.provider, amountUsd, chargeUsd, totalUsd, invoiceData.btc_amount || null, invoiceData.lightning_invoice || null, invoiceData.verify_url || null, req.ip, note || null, link.wallet_type || 'email']
         );
 
         let qrDataUrl = null;
@@ -209,6 +240,7 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
             amount_usd: amountUsd,
             charge_usd: chargeUsd,
             total_usd: totalUsd,
+            sats: totalSats,
             qr_code: qrDataUrl,
             expires_in: 900 // 15 minutes
         });
@@ -222,7 +254,9 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
 router.get('/api/pay/invoice/:id/status', async (req, res) => {
     try {
         const [payments] = await db.query(
-            `SELECT p.*, r.wallet_type, r.opennode_api_key, r.opennode_env 
+            `SELECT p.*, r.wallet_type, r.opennode_api_key, r.opennode_env,
+             r.lnbits_url, r.lnbits_invoice_key,
+             r.blink_api_key, r.blink_wallet_id
              FROM payments p 
              LEFT JOIN resellers r ON p.reseller_id = r.id 
              WHERE p.id = ? OR p.invoice_id = ?`,
@@ -232,13 +266,24 @@ router.get('/api/pay/invoice/:id/status', async (req, res) => {
         const payment = payments[0];
 
         if (payment.status === 'pending') {
-            if (payment.verify_url) {
+            let markedPaid = false;
+
+            if (payment.wallet_type === 'blink' && payment.blink_api_key && payment.invoice_id) {
                 try {
-                    const resp = await axios.get(payment.verify_url, { timeout: 2500 });
-                    if (resp.data && (resp.data.settled === true || resp.data.status === 'PAID')) {
-                        await db.query('UPDATE payments SET status = "paid", paid_at = datetime("now") WHERE id = ?', [payment.id]);
-                        payment.status = 'paid';
-                    }
+                    const check = await BlinkService.checkInvoice({
+                        apiKey: payment.blink_api_key,
+                        paymentHash: payment.invoice_id
+                    });
+                    if (check.paid) markedPaid = true;
+                } catch(e) {}
+            } else if (payment.wallet_type === 'lnbits' && payment.lnbits_invoice_key && payment.invoice_id) {
+                try {
+                    const check = await LNbitsService.checkInvoice({
+                        url: payment.lnbits_url,
+                        invoiceKey: payment.lnbits_invoice_key,
+                        paymentHash: payment.invoice_id
+                    });
+                    if (check.paid) markedPaid = true;
                 } catch(e) {}
             } else if (payment.wallet_type === 'opennode' && payment.invoice_id) {
                 try {
@@ -246,11 +291,25 @@ router.get('/api/pay/invoice/:id/status', async (req, res) => {
                     const resp = await axios.get(`${base}/v1/charges/${payment.invoice_id}`, {
                         headers: { Authorization: payment.opennode_api_key }
                     });
-                    if (resp.data?.data?.status === 'paid') {
-                        await db.query('UPDATE payments SET status = "paid", paid_at = datetime("now") WHERE id = ?', [payment.id]);
-                        payment.status = 'paid';
+                    if (resp.data?.data?.status === 'paid') markedPaid = true;
+                } catch(e) {}
+            } else if (payment.verify_url) {
+                try {
+                    const resp = await axios.get(payment.verify_url, { timeout: 2500 });
+                    if (resp.data && (resp.data.settled === true || resp.data.status === 'PAID')) {
+                        markedPaid = true;
                     }
                 } catch(e) {}
+            }
+
+            if (markedPaid) {
+                await db.query('UPDATE payments SET status = "paid", paid_at = datetime("now") WHERE id = ?', [payment.id]);
+                payment.status = 'paid';
+
+                // Trigger auto settlement pipeline
+                PayoutService.processAutoSettlement(payment.id, req.app.get('io')).catch(err => {
+                    console.error('Auto settlement error in status poll:', err);
+                });
             }
         }
 

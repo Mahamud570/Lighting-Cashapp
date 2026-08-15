@@ -33,6 +33,9 @@
           <span class="status-dot inactive" id="navWalletDot"></span>
         </span>
       </div>
+      <div class="nav-item" data-page="sweeps" onclick="navigate('sweeps')">
+        <span class="nav-icon">🔄</span> Auto-Sweeps & Binance
+      </div>
       <div class="nav-item" data-page="themes" onclick="navigate('themes')">
         <span class="nav-icon">🎨</span> Payment Themes
       </div>
@@ -258,20 +261,104 @@
           <div class="card-title">Choose Payment Provider</div>
           <div class="radio-card-group">
 
+            <!-- LNbits -->
+            <div class="radio-card" id="rcLnbits" onclick="selectProvider('lnbits')">
+              <label>
+                <input type="radio" name="provider" value="lnbits" id="radioLnbits">
+                <div>
+                  <div class="rc-title">⚡ LNbits <span class="badge badge-green" style="margin-left:8px">Webhooks + Outbound API</span></div>
+                  <div class="rc-sub">Self-hosted or cloud LNbits wallet. Supports instant webhooks & automated outbound payouts.</div>
+                  <div class="rc-body">
+                    <div class="form-row mt-12">
+                      <div class="form-group">
+                        <label class="form-label">LNbits Server URL</label>
+                        <input class="form-control" type="url" id="lnbitsUrl" placeholder="https://legend.lnbits.com">
+                      </div>
+                      <div class="form-group">
+                        <label class="form-label">Invoice / Read Key</label>
+                        <input class="form-control" type="password" id="lnbitsInvoiceKey" placeholder="your-invoice-read-key">
+                      </div>
+                    </div>
+                    <div class="form-group">
+                      <label class="form-label">Admin Key (Required for Auto-Payouts & Binance Auto-Sweep)</label>
+                      <input class="form-control" type="password" id="lnbitsAdminKey" placeholder="your-admin-key">
+                      <div class="form-hint">Admin key enables automated outbound lightning payments and auto-sweeping.</div>
+                    </div>
+                    <div class="flex gap-8">
+                      <button class="btn btn-ghost btn-sm" onclick="testLnbits(event)">Test Connection</button>
+                      <button class="btn btn-primary btn-sm" onclick="saveLnbits(event)">Save LNbits</button>
+                    </div>
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            <!-- Blink -->
+            <div class="radio-card" id="rcBlink" onclick="selectProvider('blink')">
+              <label>
+                <input type="radio" name="provider" value="blink" id="radioBlink">
+                <div>
+                  <div class="rc-title">🟡 Blink (Bitcoin Beach) <span class="badge badge-green" style="margin-left:8px">GraphQL API + Instant Payout</span></div>
+                  <div class="rc-sub">Instant zero-fee Lightning payments with auto wallet resolution.</div>
+                  <div class="rc-body">
+                    <div class="form-row mt-12">
+                      <div class="form-group">
+                        <label class="form-label">Blink API Key</label>
+                        <input class="form-control" type="password" id="blinkApiKey" placeholder="blink_...">
+                      </div>
+                      <div class="form-group">
+                        <label class="form-label">BTC Wallet ID (Optional - Auto Detected)</label>
+                        <input class="form-control" id="blinkWalletId" placeholder="Auto-detected from API Key">
+                      </div>
+                    </div>
+                    <div class="flex gap-8">
+                      <button class="btn btn-ghost btn-sm" onclick="testBlink(event)">Test Connection</button>
+                      <button class="btn btn-primary btn-sm" onclick="saveBlink(event)">Save Blink</button>
+                    </div>
+                  </div>
+                </div>
+              </label>
+            </div>
+
+            <!-- Alby / NWC -->
+            <div class="radio-card" id="rcAlby" onclick="selectProvider('alby')">
+              <label>
+                <input type="radio" name="provider" value="alby" id="radioAlby">
+                <div>
+                  <div class="rc-title">🐝 Alby & Nostr Wallet Connect (NWC) <span class="badge badge-green" style="margin-left:8px">Instant Settlement</span></div>
+                  <div class="rc-sub">Connect via Alby API Access Token or Nostr Wallet Connect URI.</div>
+                  <div class="rc-body">
+                    <div class="form-group mt-12">
+                      <label class="form-label">Alby OAuth Access Token</label>
+                      <input class="form-control" type="password" id="albyAccessToken" placeholder="ey...">
+                    </div>
+                    <div class="form-group">
+                      <label class="form-label">NWC Connection String (Optional)</label>
+                      <input class="form-control" type="password" id="albyNwcString" placeholder="nostr+walletconnect://...">
+                    </div>
+                    <div class="flex gap-8">
+                      <button class="btn btn-ghost btn-sm" onclick="testAlby(event)">Test Connection</button>
+                      <button class="btn btn-primary btn-sm" onclick="saveAlby(event)">Save Alby / NWC</button>
+                    </div>
+                  </div>
+                </div>
+              </label>
+            </div>
+
             <!-- Email -->
             <div class="radio-card" id="rcEmail" onclick="selectProvider('email')">
               <label>
                 <input type="radio" name="provider" value="email" id="radioEmail">
                 <div>
-                  <div class="rc-title">⚡ Lightning Wallet Email <span class="badge badge-yellow" style="margin-left:8px">Manual</span></div>
-                  <div class="rc-sub">Use Wallet of Satoshi or similar Lightning email wallets</div>
+                  <div class="rc-title">⚡ Lightning Address / LNURL-Pay <span class="badge badge-yellow" style="margin-left:8px">Direct Inbound</span></div>
+                  <div class="rc-sub">Use your personal Lightning Address (e.g. user@coinos.io, user@walletofsatoshi.com, user@blink.sv)</div>
                   <div class="rc-body">
                     <div class="form-group mt-12">
                       <label class="form-label">Lightning Email Address</label>
                       <input class="form-control" type="email" id="walletEmail" placeholder="yourname@walletofsatoshi.com">
-                      <div class="form-hint">Only use: name@walletofsatoshi.com or similar Lightning email providers</div>
+                      <div class="form-hint">Sats resolve directly to your wallet on checkout creation.</div>
                     </div>
-                    <button class="btn btn-primary btn-sm" onclick="saveEmailWallet(event)">Save Wallet Email</button>
+                    <button class="btn btn-primary btn-sm" onclick="saveEmailWallet(event)">Save Lightning Address</button>
                   </div>
                 </div>
               </label>
@@ -344,6 +431,171 @@
                 </div>
               </label>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── AUTO-SWEEPS & BINANCE PAGE ────────── -->
+      <div class="page" id="page-sweeps">
+        <div class="page-header">
+          <div>
+            <div class="page-title">🔄 Auto-Sweeps & Binance Settlement</div>
+            <div class="page-sub">Automate instant Lightning payouts and auto-sweep funds directly into your Binance exchange wallet</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="loadSweeps()">⟳ Refresh History</button>
+        </div>
+
+        <div class="grid-2 mb-24">
+          <!-- Binance Config Card -->
+          <div class="card">
+            <div class="card-title flex-between">
+              <span>🏦 Binance Auto-Sweep Engine</span>
+              <span class="badge badge-green">Zero-Fee LN Deposit</span>
+            </div>
+            <p class="text-sub mb-16">Automatically generates Binance Bitcoin Lightning deposit invoices via API and sweeps incoming customer funds straight into Binance.</p>
+
+            <div class="form-group mb-16">
+              <label class="flex-center gap-8 cursor-pointer" style="font-weight:600;">
+                <input type="checkbox" id="binanceAutoSweepToggle" style="width:18px;height:18px;accent-color:#00d632;">
+                <span>Enable Binance Auto-Sweep on incoming payments</span>
+              </label>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Binance API Key</label>
+              <input class="form-control" type="password" id="binanceApiKey" placeholder="Your Binance API Key">
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Binance API Secret</label>
+              <input class="form-control" type="password" id="binanceApiSecret" placeholder="Your Binance API Secret">
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label">Sweep Threshold (USD)</label>
+                <input class="form-control" type="number" step="0.5" id="binanceSweepThreshold" placeholder="0 (Immediate)">
+                <div class="form-hint">Set to 0 to sweep immediately on every payment</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Deposit Network</label>
+                <select class="form-control" id="binanceSweepType">
+                  <option value="lightning">Bitcoin Lightning (Instant)</option>
+                  <option value="onchain">Bitcoin On-Chain (BTC)</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="flex gap-8 mt-16">
+              <button class="btn btn-ghost btn-sm" onclick="testBinanceConnection()">Test Binance API</button>
+              <button class="btn btn-primary btn-sm" onclick="saveSweepConfig()">Save Binance Settings</button>
+            </div>
+            <div id="binanceTestOutput" class="mt-12" style="display:none;padding:10px;border-radius:8px;background:rgba(255,255,255,0.05);font-size:12px;"></div>
+          </div>
+
+          <!-- Instant LN Payout & Manual Sweep Card -->
+          <div class="flex-column gap-24">
+            <div class="card">
+              <div class="card-title">⚡ Instant Outbound LN Payout Rules</div>
+              <p class="text-sub mb-16">Automatically route a percentage of received payments to an external Lightning Address.</p>
+
+              <div class="form-group mb-16">
+                <label class="flex-center gap-8 cursor-pointer" style="font-weight:600;">
+                  <input type="checkbox" id="autoPayoutToggle" style="width:18px;height:18px;accent-color:#00d632;">
+                  <span>Enable Instant Payout Forwarding</span>
+                </label>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">Forwarding Lightning Address</label>
+                  <input class="form-control" id="autoPayoutAddress" placeholder="partner@blink.sv or wallet@coinos.io">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Payout Percentage (%)</label>
+                  <input class="form-control" type="number" min="1" max="100" id="autoPayoutPercent" value="100">
+                </div>
+              </div>
+              <button class="btn btn-primary btn-sm mt-8" onclick="saveSweepConfig()">Save Payout Rules</button>
+            </div>
+
+            <!-- Telegram Notifications Card -->
+            <div class="card">
+              <div class="card-title flex-between">
+                <span>✈️ Instant Telegram Alerts</span>
+                <span class="badge badge-blue">Real-Time</span>
+              </div>
+              <p class="text-sub mb-16">Receive instant push notifications on your phone whenever a customer sends Sats or when an auto-sweep executes.</p>
+
+              <div class="form-group">
+                <label class="form-label">Telegram Bot Token</label>
+                <input class="form-control" type="password" id="tgBotToken" placeholder="e.g. 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ">
+                <div class="form-hint">Create a bot with <strong>@BotFather</strong> on Telegram to get your token</div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label">Telegram Chat ID</label>
+                <input class="form-control" id="tgChatId" placeholder="e.g. 987654321">
+                <div class="form-hint">Message <strong>@userinfobot</strong> on Telegram to get your personal Chat ID (or group ID)</div>
+              </div>
+
+              <div class="flex gap-8 mt-16">
+                <button class="btn btn-ghost btn-sm" onclick="testTelegramAlert(event)">Test Telegram Alert</button>
+                <button class="btn btn-primary btn-sm" onclick="saveTelegramSettings(event)">Save Telegram Settings</button>
+              </div>
+              <div id="tgTestOutput" class="mt-12" style="display:none;padding:10px;border-radius:8px;background:rgba(255,255,255,0.05);font-size:12px;"></div>
+            </div>
+
+            <!-- Manual Sweep Trigger Card -->
+            <div class="card">
+              <div class="card-title">🚀 1-Click Manual Sweep</div>
+              <p class="text-sub mb-12">Instantly sweep balance to Binance or custom destination.</p>
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label">Destination</label>
+                  <select class="form-control" id="manualSweepType" onchange="toggleManualDestInput()">
+                    <option value="binance">Binance Exchange Wallet</option>
+                    <option value="ln_address">Custom Lightning Address</option>
+                    <option value="bolt11">Custom BOLT11 Invoice</option>
+                  </select>
+                </div>
+                <div class="form-group" id="manualDestGroup" style="display:none;">
+                  <label class="form-label">Destination Address / Invoice</label>
+                  <input class="form-control" id="manualSweepDest" placeholder="user@blink.sv or lnbc...">
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Amount ($ USD)</label>
+                  <input class="form-control" type="number" step="0.5" id="manualSweepAmount" placeholder="e.g. 25.00">
+                </div>
+              </div>
+              <button class="btn btn-accent btn-sm mt-8" onclick="triggerManualSweep()">Execute Instant Sweep</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sweeps Audit Log Table -->
+        <div class="card">
+          <div class="card-title flex-between">
+            <span>📋 Auto-Sweep & Payout History</span>
+            <span class="text-sub" style="font-size:13px;" id="sweepTotalCount">0 records</span>
+          </div>
+          <div class="table-wrap mt-12">
+            <table>
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Type</th>
+                  <th>Amount (USD)</th>
+                  <th>Satoshis</th>
+                  <th>Destination</th>
+                  <th>TxID / Preimage</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="sweepsTableBody">
+                <tr><td colspan="7"><div class="empty-state"><div class="empty-icon">🔄</div><div class="empty-text">No sweeps or payouts executed yet</div></div></td></tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -871,7 +1123,8 @@
     <div id="modalBody"></div>
     <div class="modal-footer" id="modalFooter"></div>
   </div>
-</div>
+<!-- ─── TOAST CONTAINER ──────────────────────────────── -->
+<div id="toastContainer" class="toast-container"></div>
 
 <script src="/js/qrcode.min.js"></script>
 <script src="/socket.io/socket.io.js"></script>

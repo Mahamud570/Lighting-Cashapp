@@ -10,6 +10,9 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
+// Share io instance with Express routers
+app.set('io', io);
+
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -24,9 +27,14 @@ app.use('/', require('./routes/wallet'));
 app.use('/', require('./routes/payments'));
 app.use('/', require('./routes/users'));
 app.use('/', require('./routes/security'));
+app.use('/', require('./routes/sweeps'));
+app.use('/', require('./routes/webhooks'));
 app.use('/', require('./routes/pay'));
 
 const auth = require('./middleware/auth');
+const PayoutService = require('./services/payoutService');
+const LNbitsService = require('./services/lnbitsService');
+const BlinkService = require('./services/blinkService');
 
 // GET /api/me - current user info
 app.get('/api/me', auth, (req, res) => {
@@ -57,11 +65,13 @@ io.on('connection', (socket) => {
     });
 });
 
-// Poll pending payments every 10s and broadcast updates
+// Poll pending payments every 10s and broadcast updates + trigger auto-settlements
 setInterval(async () => {
     try {
         const [pending] = await db.query(
-            `SELECT p.*, r.opennode_api_key, r.opennode_env, r.wallet_type, r.btcpay_url, r.btcpay_store_id, r.btcpay_api_key
+            `SELECT p.*, r.opennode_api_key, r.opennode_env, r.wallet_type, r.btcpay_url, r.btcpay_store_id, r.btcpay_api_key,
+                    r.lnbits_url, r.lnbits_invoice_key,
+                    r.blink_api_key, r.blink_wallet_id
              FROM payments p LEFT JOIN resellers r ON p.reseller_id = r.id
              WHERE p.status = 'pending' AND p.expires_at > datetime('now')
              LIMIT 50`
@@ -70,7 +80,24 @@ setInterval(async () => {
         for (const payment of pending) {
             let newStatus = null;
 
-            if (payment.verify_url) {
+            if (payment.wallet_type === 'blink' && payment.blink_api_key && payment.invoice_id) {
+                try {
+                    const check = await BlinkService.checkInvoice({
+                        apiKey: payment.blink_api_key,
+                        paymentHash: payment.invoice_id
+                    });
+                    if (check.paid) newStatus = 'paid';
+                } catch (e) {}
+            } else if (payment.wallet_type === 'lnbits' && payment.lnbits_invoice_key && payment.invoice_id) {
+                try {
+                    const check = await LNbitsService.checkInvoice({
+                        url: payment.lnbits_url,
+                        invoiceKey: payment.lnbits_invoice_key,
+                        paymentHash: payment.invoice_id
+                    });
+                    if (check.paid) newStatus = 'paid';
+                } catch (e) {}
+            } else if (payment.verify_url) {
                 try {
                     const axios = require('axios');
                     const resp = await axios.get(payment.verify_url, { timeout: 3000 });
@@ -91,13 +118,19 @@ setInterval(async () => {
             }
 
             if (newStatus) {
-                await db.query('UPDATE payments SET status = ?, paid_at = datetime(\'now\') WHERE id = ?', [newStatus, payment.id]);
+                await db.query("UPDATE payments SET status = ?, paid_at = datetime('now') WHERE id = ?", [newStatus, payment.id]);
                 io.to(`reseller:${payment.reseller_id}`).emit('payment:update', { id: payment.id, status: newStatus });
                 io.to(`payment:${payment.id}`).emit('status', { status: newStatus });
+
+                if (newStatus === 'paid') {
+                    PayoutService.processAutoSettlement(payment.id, io).catch(err => {
+                        console.error('Auto settlement trigger failed in polling loop:', err);
+                    });
+                }
             }
         }
 
-        // Also expire overdue
+        // Expire overdue
         await db.query("UPDATE payments SET status = 'expired' WHERE status = 'pending' AND expires_at <= datetime('now')");
     } catch (err) {
         // silent
@@ -109,4 +142,12 @@ server.listen(PORT, () => {
     console.log(`\n⚡ Lightning Pay running at http://localhost:${PORT}`);
     console.log(`   Dashboard: http://localhost:${PORT}/reseller`);
     console.log(`   Login:     http://localhost:${PORT}/login\n`);
+
+    // Start Interactive Telegram Bot Engine
+    try {
+        const telegramBotEngine = require('./services/telegramBotEngine');
+        telegramBotEngine.start();
+    } catch(e) {
+        console.error('Telegram bot engine init error:', e.message);
+    }
 });

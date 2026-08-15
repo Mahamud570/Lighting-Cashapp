@@ -1,7 +1,26 @@
+# Dependencies
 node_modules/
+
+# Database files (contain live API keys / transaction data)
 data/*.db
 data/*.db-wal
 data/*.db-shm
+*.sqlite
+*.sqlite3
+
+# Environment secrets
 .env
-.DS_Store
+.env.*
+!.env.example
+
+# Logs
 npm-debug.log*
+*.log
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# IDE folders
+.vscode/
+.idea/
