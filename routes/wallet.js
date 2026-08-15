@@ -100,7 +100,7 @@ router.post('/api/wallet/lnbits/test', auth, async (req, res) => {
     try {
         const { url, invoice_key } = req.body;
         const targetUrl = url || req.reseller.lnbits_url || 'https://legend.lnbits.com';
-        const key = invoice_key || req.reseller.lnbits_invoice_key;
+        const key = (invoice_key && !invoice_key.startsWith('***')) ? invoice_key.trim() : req.reseller.lnbits_invoice_key;
 
         const details = await LNbitsService.getWalletDetails({ url: targetUrl, invoiceKey: key });
         res.json({ success: true, data: details });
@@ -115,13 +115,15 @@ router.post('/api/wallet/blink', auth, async (req, res) => {
         const { api_key, wallet_id } = req.body;
         if (!api_key) return res.status(400).json({ error: 'Blink API Key is required' });
 
+        const cleanKey = (api_key && !api_key.startsWith('***')) ? api_key.trim() : req.reseller.blink_api_key;
+
         // Test connection and auto-detect wallet ID if not provided
-        const details = await BlinkService.getWalletDetails({ apiKey: api_key.trim() });
+        const details = await BlinkService.getWalletDetails({ apiKey: cleanKey });
         const finalWalletId = wallet_id ? wallet_id.trim() : details.wallet_id;
 
         await db.query(
             `UPDATE resellers SET wallet_type = "blink", blink_api_key = ?, blink_wallet_id = ? WHERE id = ?`,
-            [api_key.trim(), finalWalletId, req.reseller.id]
+            [cleanKey, finalWalletId, req.reseller.id]
         );
 
         res.json({ success: true, message: `Blink Connected (${details.username || details.wallet_id})`, data: details });
@@ -134,7 +136,7 @@ router.post('/api/wallet/blink', auth, async (req, res) => {
 router.post('/api/wallet/blink/test', auth, async (req, res) => {
     try {
         const { api_key } = req.body;
-        const key = api_key || req.reseller.blink_api_key;
+        const key = (api_key && !api_key.startsWith('***')) ? api_key.trim() : req.reseller.blink_api_key;
         const details = await BlinkService.getWalletDetails({ apiKey: key });
         res.json({ success: true, data: details });
     } catch (err) {
@@ -150,14 +152,17 @@ router.post('/api/wallet/alby', auth, async (req, res) => {
             return res.status(400).json({ error: 'Alby Access Token or NWC connection string required' });
         }
 
+        const cleanToken = (access_token && !access_token.startsWith('***')) ? access_token.trim() : req.reseller.alby_access_token;
+        const cleanNwc = (nwc_string && !nwc_string.startsWith('***')) ? nwc_string.trim() : req.reseller.alby_nwc_string;
+
         const details = await AlbyService.getAccountDetails({
-            accessToken: access_token ? access_token.trim() : null,
-            nwcString: nwc_string ? nwc_string.trim() : null
+            accessToken: cleanToken,
+            nwcString: cleanNwc
         });
 
         await db.query(
             `UPDATE resellers SET wallet_type = "alby", alby_access_token = ?, alby_nwc_string = ? WHERE id = ?`,
-            [access_token ? access_token.trim() : null, nwc_string ? nwc_string.trim() : null, req.reseller.id]
+            [cleanToken, cleanNwc, req.reseller.id]
         );
 
         res.json({ success: true, message: 'Alby wallet connected successfully', data: details });
@@ -170,8 +175,8 @@ router.post('/api/wallet/alby', auth, async (req, res) => {
 router.post('/api/wallet/alby/test', auth, async (req, res) => {
     try {
         const { access_token, nwc_string } = req.body;
-        const token = access_token || req.reseller.alby_access_token;
-        const nwc = nwc_string || req.reseller.alby_nwc_string;
+        const token = (access_token && !access_token.startsWith('***')) ? access_token.trim() : req.reseller.alby_access_token;
+        const nwc = (nwc_string && !nwc_string.startsWith('***')) ? nwc_string.trim() : req.reseller.alby_nwc_string;
 
         const details = await AlbyService.getAccountDetails({ accessToken: token, nwcString: nwc });
         res.json({ success: true, data: details });

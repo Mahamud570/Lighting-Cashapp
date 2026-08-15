@@ -28,8 +28,8 @@ router.get('/api/sweeps', auth, async (req, res) => {
 router.post('/api/sweeps/test-binance', auth, async (req, res) => {
     try {
         const { api_key, api_secret } = req.body;
-        const key = api_key || req.reseller.binance_api_key;
-        const secret = api_secret || req.reseller.binance_api_secret;
+        const key = (api_key && !api_key.startsWith('***')) ? api_key.trim() : req.reseller.binance_api_key;
+        const secret = (api_secret && !api_secret.startsWith('***')) ? api_secret.trim() : req.reseller.binance_api_secret;
 
         if (!key || !secret) {
             return res.status(400).json({ error: 'Binance API Key and Secret are required' });
