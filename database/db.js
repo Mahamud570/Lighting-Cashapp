@@ -1,9 +1,10 @@
 /**
- * SQLite adapter that mimics the mysql2 promise pool API.
+ * SQLite adapter using the asynchronous `sqlite3` package.
+ * Mimics the mysql2 promise pool API.
  * All routes use: const [rows] = await db.query(sql, params)
  *                 const [result] = await db.query(INSERT...) → result.insertId
  */
-const Database = require('better-sqlite3');
+const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const fs = require('fs');
 
@@ -11,100 +12,149 @@ const dataDir = path.join(__dirname, '../data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 const dbPath = path.join(dataDir, 'lightning_pay.db');
-const sqlite = new Database(dbPath);
+const db = new sqlite3.Database(dbPath);
 
-// Performance settings
-sqlite.pragma('journal_mode = WAL');
-sqlite.pragma('foreign_keys = ON');
-sqlite.pragma('synchronous = NORMAL');
+// Helper to run query as promise for migrations
+function runAsync(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.run(sql, params, function(err) {
+            if (err) reject(err);
+            else resolve(this);
+        });
+    });
+}
 
-// Run schema on first start
-const schemaPath = path.join(__dirname, 'schema.sql');
-if (fs.existsSync(schemaPath)) {
-    const schema = fs.readFileSync(schemaPath, 'utf8');
-    const statements = schema.split(';').map(s => s.trim()).filter(s => s.length > 0);
-    for (const stmt of statements) {
-        try { sqlite.prepare(stmt).run(); } catch(e) { /* ignore already-exists errors */ }
+// Helper to get single row as promise
+function getAsync(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.get(sql, params, (err, row) => {
+            if (err) reject(err);
+            else resolve(row);
+        });
+    });
+}
+
+// Initialize database settings and schema sequentially
+async function initDb() {
+    try {
+        // Performance and behavior settings
+        await runAsync('PRAGMA journal_mode = WAL');
+        await runAsync('PRAGMA foreign_keys = ON');
+        await runAsync('PRAGMA synchronous = NORMAL');
+
+        // Run schema
+        const schemaPath = path.join(__dirname, 'schema.sql');
+        if (fs.existsSync(schemaPath)) {
+            const schema = fs.readFileSync(schemaPath, 'utf8');
+            // Split by semicolon, filter out comments and empty statements
+            const statements = schema
+                .split(';')
+                .map(s => s.trim())
+                .filter(s => s.length > 0 && !s.startsWith('--'));
+
+            for (const stmt of statements) {
+                try {
+                    await runAsync(stmt);
+                } catch (e) {
+                    // Ignore already-exists errors
+                }
+            }
+        }
+
+        // Auto-migrate columns
+        const migrations = [
+            "ALTER TABLE resellers ADD COLUMN lnbits_url TEXT",
+            "ALTER TABLE resellers ADD COLUMN lnbits_invoice_key TEXT",
+            "ALTER TABLE resellers ADD COLUMN lnbits_admin_key TEXT",
+            "ALTER TABLE resellers ADD COLUMN blink_api_key TEXT",
+            "ALTER TABLE resellers ADD COLUMN blink_wallet_id TEXT",
+            "ALTER TABLE resellers ADD COLUMN alby_nwc_string TEXT",
+            "ALTER TABLE resellers ADD COLUMN alby_access_token TEXT",
+            "ALTER TABLE resellers ADD COLUMN alby_webhook_secret TEXT",
+            "ALTER TABLE resellers ADD COLUMN binance_api_key TEXT",
+            "ALTER TABLE resellers ADD COLUMN binance_api_secret TEXT",
+            "ALTER TABLE resellers ADD COLUMN binance_auto_sweep_enabled INTEGER DEFAULT 0",
+            "ALTER TABLE resellers ADD COLUMN binance_sweep_threshold_usd REAL DEFAULT 0",
+            "ALTER TABLE resellers ADD COLUMN binance_sweep_type TEXT DEFAULT 'lightning'",
+            "ALTER TABLE resellers ADD COLUMN auto_payout_enabled INTEGER DEFAULT 0",
+            "ALTER TABLE resellers ADD COLUMN auto_payout_address TEXT",
+            "ALTER TABLE resellers ADD COLUMN auto_payout_percent REAL DEFAULT 100",
+            "ALTER TABLE resellers ADD COLUMN telegram_bot_token TEXT",
+            "ALTER TABLE resellers ADD COLUMN telegram_chat_id TEXT"
+        ];
+
+        for (const mig of migrations) {
+            try {
+                await runAsync(mig);
+            } catch (e) {
+                // Column exists or other harmless migration error
+            }
+        }
+
+        // Relax old SQLite check constraint if present
+        try {
+            const tableInfo = await getAsync("SELECT sql FROM sqlite_master WHERE type='table' AND name='resellers'");
+            if (tableInfo && tableInfo.sql && !tableInfo.sql.includes("'blink'")) {
+                await runAsync('PRAGMA foreign_keys = OFF');
+                await runAsync(`
+                    CREATE TABLE IF NOT EXISTS resellers_temp (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        username TEXT UNIQUE NOT NULL,
+                        email TEXT UNIQUE NOT NULL,
+                        password TEXT NOT NULL,
+                        totp_secret TEXT,
+                        totp_enabled INTEGER DEFAULT 0,
+                        wallet_type TEXT,
+                        wallet_email TEXT,
+                        opennode_api_key TEXT,
+                        opennode_env TEXT DEFAULT 'live',
+                        btcpay_url TEXT,
+                        btcpay_store_id TEXT,
+                        btcpay_api_key TEXT,
+                        btcpay_webhook_id TEXT,
+                        btcpay_webhook_secret TEXT,
+                        lnbits_url TEXT,
+                        lnbits_invoice_key TEXT,
+                        lnbits_admin_key TEXT,
+                        blink_api_key TEXT,
+                        blink_wallet_id TEXT,
+                        alby_nwc_string TEXT,
+                        alby_access_token TEXT,
+                        alby_webhook_secret TEXT,
+                        binance_api_key TEXT,
+                        binance_api_secret TEXT,
+                        binance_auto_sweep_enabled INTEGER DEFAULT 0,
+                        binance_sweep_threshold_usd REAL DEFAULT 0,
+                        binance_sweep_type TEXT DEFAULT 'lightning',
+                        auto_payout_enabled INTEGER DEFAULT 0,
+                        auto_payout_address TEXT,
+                        auto_payout_percent REAL DEFAULT 100,
+                        charge_mode TEXT DEFAULT 'none',
+                        charge_value REAL DEFAULT 0,
+                        status TEXT DEFAULT 'active',
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        telegram_bot_token TEXT,
+                        telegram_chat_id TEXT
+                    )
+                `);
+                await runAsync("INSERT OR IGNORE INTO resellers_temp SELECT * FROM resellers");
+                await runAsync("DROP TABLE resellers");
+                await runAsync("ALTER TABLE resellers_temp RENAME TO resellers");
+                await runAsync('PRAGMA foreign_keys = ON');
+            }
+        } catch (migErr) {
+            // Ignore migration check issues
+        }
+
+        console.log('✅ SQLite database initialized successfully.');
+    } catch (err) {
+        console.error('❌ SQLite initialization error:', err.message);
     }
 }
 
-// Auto-migrate newly added columns for existing databases
-const migrations = [
-    "ALTER TABLE resellers ADD COLUMN lnbits_url TEXT",
-    "ALTER TABLE resellers ADD COLUMN lnbits_invoice_key TEXT",
-    "ALTER TABLE resellers ADD COLUMN lnbits_admin_key TEXT",
-    "ALTER TABLE resellers ADD COLUMN blink_api_key TEXT",
-    "ALTER TABLE resellers ADD COLUMN blink_wallet_id TEXT",
-    "ALTER TABLE resellers ADD COLUMN alby_nwc_string TEXT",
-    "ALTER TABLE resellers ADD COLUMN alby_access_token TEXT",
-    "ALTER TABLE resellers ADD COLUMN alby_webhook_secret TEXT",
-    "ALTER TABLE resellers ADD COLUMN binance_api_key TEXT",
-    "ALTER TABLE resellers ADD COLUMN binance_api_secret TEXT",
-    "ALTER TABLE resellers ADD COLUMN binance_auto_sweep_enabled INTEGER DEFAULT 0",
-    "ALTER TABLE resellers ADD COLUMN binance_sweep_threshold_usd REAL DEFAULT 0",
-    "ALTER TABLE resellers ADD COLUMN binance_sweep_type TEXT DEFAULT 'lightning'",
-    "ALTER TABLE resellers ADD COLUMN auto_payout_enabled INTEGER DEFAULT 0",
-    "ALTER TABLE resellers ADD COLUMN auto_payout_address TEXT",
-    "ALTER TABLE resellers ADD COLUMN auto_payout_percent REAL DEFAULT 100"
-];
-
-for (const mig of migrations) {
-    try { sqlite.prepare(mig).run(); } catch (e) { /* column exists */ }
-}
-
-// Relax old SQLite check constraint if present
-try {
-    const tableInfo = sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='resellers'").get();
-    if (tableInfo && tableInfo.sql && !tableInfo.sql.includes("'blink'")) {
-        sqlite.pragma('foreign_keys = OFF');
-        sqlite.prepare(`
-            CREATE TABLE IF NOT EXISTS resellers_temp (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                email TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL,
-                totp_secret TEXT,
-                totp_enabled INTEGER DEFAULT 0,
-                wallet_type TEXT,
-                wallet_email TEXT,
-                opennode_api_key TEXT,
-                opennode_env TEXT DEFAULT 'live',
-                btcpay_url TEXT,
-                btcpay_store_id TEXT,
-                btcpay_api_key TEXT,
-                btcpay_webhook_id TEXT,
-                btcpay_webhook_secret TEXT,
-                lnbits_url TEXT,
-                lnbits_invoice_key TEXT,
-                lnbits_admin_key TEXT,
-                blink_api_key TEXT,
-                blink_wallet_id TEXT,
-                alby_nwc_string TEXT,
-                alby_access_token TEXT,
-                alby_webhook_secret TEXT,
-                binance_api_key TEXT,
-                binance_api_secret TEXT,
-                binance_auto_sweep_enabled INTEGER DEFAULT 0,
-                binance_sweep_threshold_usd REAL DEFAULT 0,
-                binance_sweep_type TEXT DEFAULT 'lightning',
-                auto_payout_enabled INTEGER DEFAULT 0,
-                auto_payout_address TEXT,
-                auto_payout_percent REAL DEFAULT 100,
-                charge_mode TEXT DEFAULT 'none',
-                charge_value REAL DEFAULT 0,
-                status TEXT DEFAULT 'active',
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        `).run();
-        sqlite.prepare("INSERT OR IGNORE INTO resellers_temp SELECT * FROM resellers").run();
-        sqlite.prepare("DROP TABLE resellers").run();
-        sqlite.prepare("ALTER TABLE resellers_temp RENAME TO resellers").run();
-        sqlite.pragma('foreign_keys = ON');
-    }
-} catch(migErr) {
-    // console.log('Migration check info:', migErr.message);
-}
+// Start async initialization
+initDb();
 
 /**
  * Convert MySQL placeholders and functions to SQLite equivalents inline.
@@ -141,24 +191,22 @@ const pool = {
      */
     query: (sql, params = []) => {
         return new Promise((resolve, reject) => {
-            try {
-                const converted = convertSql(sql);
-                const upper = converted.trim().toUpperCase();
-                const isSelect = upper.startsWith('SELECT') || upper.startsWith('PRAGMA') || upper.startsWith('WITH');
+            const converted = convertSql(sql);
+            const upper = converted.trim().toUpperCase();
+            const isSelect = upper.startsWith('SELECT') || upper.startsWith('PRAGMA') || upper.startsWith('WITH');
 
-                const flatParams = (Array.isArray(params) ? params.flat() : []).map(sanitizeParam);
+            const flatParams = (Array.isArray(params) ? params.flat() : []).map(sanitizeParam);
 
-                const stmt = sqlite.prepare(converted);
-
-                if (isSelect) {
-                    const rows = stmt.all(...flatParams);
-                    resolve([rows, []]);
-                } else {
-                    const result = stmt.run(...flatParams);
-                    resolve([{ insertId: result.lastInsertRowid, affectedRows: result.changes }, []]);
-                }
-            } catch (err) {
-                reject(err);
+            if (isSelect) {
+                db.all(converted, flatParams, (err, rows) => {
+                    if (err) reject(err);
+                    else resolve([rows, []]);
+                });
+            } else {
+                db.run(converted, flatParams, function(err) {
+                    if (err) reject(err);
+                    else resolve([{ insertId: this.lastID, affectedRows: this.changes }, []]);
+                });
             }
         });
     }

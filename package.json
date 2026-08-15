@@ -18,17 +18,19 @@
   "dependencies": {
     "axios": "^1.7.2",
     "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^9.4.3",
+    "better-sqlite3": "^11.5.0",
     "cookie-parser": "^1.4.6",
     "csv-writer": "^1.6.0",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "express-rate-limit": "^8.6.2",
     "express-session": "^1.18.0",
     "jsonwebtoken": "^9.0.2",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^6.9.14",
     "qrcode": "^1.5.3",
     "socket.io": "^4.7.5",
-    "speakeasy": "^2.0.0"
+    "speakeasy": "^2.0.0",
+    "sqlite3": "^6.0.1"
   }
 }

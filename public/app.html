@@ -27,6 +27,9 @@
       <div class="nav-item active" data-page="dashboard" onclick="navigate('dashboard')">
         <span class="nav-icon">📊</span> Dashboard
       </div>
+      <div class="nav-item" data-page="analytics" onclick="navigate('analytics')">
+        <span class="nav-icon">📈</span> Analytics
+      </div>
       <div class="nav-item" data-page="wallet" onclick="navigate('wallet')">
         <span class="nav-icon">⚡</span> Lightning Wallet
         <span class="wallet-status-indicator" id="navWalletBadge" style="display:none;margin-left:auto;">
@@ -63,6 +66,9 @@
         <div class="nav-group-items">
           <div class="nav-item" data-page="security" onclick="navigate('security')">
             <span class="nav-icon">🔐</span> Security
+          </div>
+          <div class="nav-item" data-page="twofa" onclick="navigate('twofa')">
+            <span class="nav-icon">🔑</span> 2FA Login
           </div>
           <div class="nav-item" data-page="devices" onclick="navigate('devices')">
             <span class="nav-icon">📱</span> Device Login
@@ -1111,6 +1117,17 @@
 
     </div><!-- /content -->
   </div><!-- /main -->
+
+  <!-- ─── ANALYTICS PAGE ────────────────────────────── -->
+  <div class="main" id="page-analytics-wrapper" style="display:none;">
+    <div class="content" id="page-analytics"></div>
+  </div>
+
+  <!-- ─── 2FA PAGE ──────────────────────────────────── -->
+  <div class="main" id="page-twofa-wrapper" style="display:none;">
+    <div class="content" id="page-twofa"></div>
+  </div>
+
 </div><!-- /layout -->
 
 <!-- ─── MODALS ───────────────────────────────────────── -->

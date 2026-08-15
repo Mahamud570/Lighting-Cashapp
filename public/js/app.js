@@ -60,14 +60,24 @@ function navigate(page) {
         dashboard: 'Dashboard', wallet: 'Lightning Wallet', sweeps: 'Auto-Sweeps & Binance',
         themes: 'Payment Themes', links: 'Payment Links', scancodes: 'My Scan Code',
         payments: 'Payments', activity: 'System Activity', users: 'Users',
-        security: 'Security', devices: 'Device Login', charge: 'Transaction Charge'
+        security: 'Security', devices: 'Device Login', charge: 'Transaction Charge',
+        analytics: 'Analytics & Revenue', twofa: 'Two-Factor Authentication'
     };
     document.getElementById('topbarTitle').textContent = titles[page] || page;
 
     // Open settings group if navigating to sub-items
-    if (['security','devices','charge'].includes(page)) {
+    if (['security','devices','charge','twofa'].includes(page)) {
         document.getElementById('settingsGroup').classList.add('open');
     }
+
+    // Show/hide special page wrappers (analytics, twofa use their own layout)
+    const specialPages = ['analytics', 'twofa'];
+    document.querySelector('.main')?.style && (document.querySelector('.main').style.display =
+        specialPages.includes(page) ? 'none' : '');
+    specialPages.forEach(sp => {
+        const w = document.getElementById(`page-${sp}-wrapper`);
+        if (w) w.style.display = (sp === page) ? '' : 'none';
+    });
 
     // Lazy-load page data
     const loaders = {
@@ -81,7 +91,9 @@ function navigate(page) {
         users: loadUsers,
         security: loadSecurity,
         devices: loadDevices,
-        charge: loadCharge
+        charge: loadCharge,
+        analytics: loadAnalytics,
+        twofa: load2FA
     };
     if (loaders[page]) loaders[page]();
 
@@ -1276,3 +1288,263 @@ function animateNumber(id, target) {
     };
     requestAnimationFrame(tick);
 }
+
+// ─── ANALYTICS PAGE ───────────────────────────────────────────
+async function loadAnalytics() {
+    const el = document.getElementById('page-analytics');
+    if (!el) return;
+
+    el.innerHTML = `
+    <div class="page-header"><h2>📈 Analytics & Revenue</h2></div>
+    <div id="analyticsContent"><div class="loading-spinner"></div></div>`;
+
+    try {
+        const [overview, chart, topLinks] = await Promise.all([
+            apiFetch('/api/analytics/overview'),
+            apiFetch('/api/analytics/chart?period=30'),
+            apiFetch('/api/analytics/top-links')
+        ]);
+
+        el.innerHTML = `
+        <div class="page-header">
+            <h2>📈 Analytics & Revenue</h2>
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-sm btn-ghost" onclick="loadChartData(7)">7D</button>
+                <button class="btn btn-sm btn-primary" id="btn30d" onclick="loadChartData(30)">30D</button>
+                <button class="btn btn-sm btn-ghost" onclick="loadChartData(90)">90D</button>
+            </div>
+        </div>
+
+        <!-- KPI Cards -->
+        <div class="stats-grid" style="grid-template-columns:repeat(auto-fit,minmax(160px,1fr));margin-bottom:24px;">
+            <div class="stat-card">
+                <div class="stat-label">Total Revenue</div>
+                <div class="stat-value" style="color:#00d632;">$${overview.total_revenue}</div>
+                <div class="stat-sub">${overview.total_paid} paid orders</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Today</div>
+                <div class="stat-value">$${overview.today.revenue}</div>
+                <div class="stat-sub">${overview.today.count} payments</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">This Week</div>
+                <div class="stat-value">$${overview.week.revenue}</div>
+                <div class="stat-sub" style="color:${overview.week.growth >= 0 ? '#00d632' : '#ff4757'};">
+                    ${overview.week.growth >= 0 ? '▲' : '▼'} ${Math.abs(overview.week.growth)}% vs last week
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">This Month</div>
+                <div class="stat-value">$${overview.month.revenue}</div>
+                <div class="stat-sub">${overview.month.count} payments</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Avg Order</div>
+                <div class="stat-value">$${overview.avg_order}</div>
+                <div class="stat-sub">${overview.total_invoices} total invoices</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Auto-Swept</div>
+                <div class="stat-value" style="color:#00d632;">$${overview.sweeps.swept_usd}</div>
+                <div class="stat-sub">${overview.sweeps.swept} swept · ${overview.sweeps.held} held</div>
+            </div>
+        </div>
+
+        <!-- Revenue Chart -->
+        <div class="card" style="margin-bottom:24px;">
+            <div class="card-header"><h3 class="card-title">📊 Daily Revenue (30 Days)</h3></div>
+            <div class="card-body" style="padding:16px;">
+                <canvas id="revenueChart" height="100"></canvas>
+            </div>
+        </div>
+
+        <!-- Top Links Table -->
+        <div class="card">
+            <div class="card-header"><h3 class="card-title">🔗 Top Payment Links</h3></div>
+            <div class="card-body" style="padding:0;">
+                <table class="data-table">
+                    <thead><tr><th>Link</th><th>Payments</th><th>Revenue</th><th>Last Payment</th></tr></thead>
+                    <tbody>
+                        ${topLinks.length ? topLinks.map(l => `
+                            <tr>
+                                <td><strong>${l.title || l.slug}</strong><br><small style="color:#6e7681;">/pay/${l.slug}</small></td>
+                                <td>${l.payment_count}</td>
+                                <td style="color:#00d632;font-weight:700;">$${l.total_revenue}</td>
+                                <td>${fmtDate(l.last_payment)}</td>
+                            </tr>`).join('') : '<tr><td colspan="4" style="text-align:center;color:#6e7681;padding:24px;">No data yet</td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+        </div>`;
+
+        // Draw chart using Chart.js (load dynamically)
+        renderRevenueChart(chart);
+
+    } catch (e) {
+        document.getElementById('analyticsContent').innerHTML = `<div class="alert alert-error">Failed to load analytics: ${e.message}</div>`;
+    }
+}
+
+function renderRevenueChart(data) {
+    if (!window.Chart) {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
+        s.onload = () => drawChart(data);
+        document.head.appendChild(s);
+    } else {
+        drawChart(data);
+    }
+}
+
+function drawChart(data) {
+    const ctx = document.getElementById('revenueChart');
+    if (!ctx) return;
+    if (window._revenueChart) window._revenueChart.destroy();
+
+    window._revenueChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: data.labels.map(d => {
+                const dt = new Date(d);
+                return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+            }),
+            datasets: [{
+                label: 'Revenue ($)',
+                data: data.revenues,
+                backgroundColor: 'rgba(0, 214, 50, 0.25)',
+                borderColor: '#00d632',
+                borderWidth: 2,
+                borderRadius: 6,
+                hoverBackgroundColor: 'rgba(0, 214, 50, 0.5)'
+            }]
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => `$${ctx.parsed.y.toFixed(2)}`
+                    }
+                }
+            },
+            scales: {
+                x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6e7681', maxTicksLimit: 10 } },
+                y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6e7681', callback: v => '$' + v } }
+            }
+        }
+    });
+}
+
+async function loadChartData(days) {
+    try {
+        const chart = await apiFetch(`/api/analytics/chart?period=${days}`);
+        drawChart(chart);
+    } catch(e) {}
+}
+
+// ─── 2FA PAGE ─────────────────────────────────────────────────
+async function load2FA() {
+    const el = document.getElementById('page-twofa');
+    if (!el) return;
+
+    el.innerHTML = `<div class="page-header"><h2>🔑 Two-Factor Authentication (2FA)</h2></div><div id="twofaContent"><div class="loading-spinner"></div></div>`;
+
+    try {
+        const status = await apiFetch('/api/2fa/status');
+        render2FAPage(status.enabled);
+    } catch(e) {
+        document.getElementById('twofaContent').innerHTML = `<div class="alert alert-error">Failed to load 2FA status</div>`;
+    }
+}
+
+function render2FAPage(enabled) {
+    const content = document.getElementById('twofaContent');
+    if (!content) return;
+
+    if (enabled) {
+        content.innerHTML = `
+        <div class="card" style="max-width:500px;">
+            <div class="card-header">
+                <h3 class="card-title">🟢 2FA is Active</h3>
+            </div>
+            <div class="card-body">
+                <p style="color:#8b949e;margin-bottom:20px;">Your account is protected with Google Authenticator. A 6-digit code is required every time you log in.</p>
+                <div class="alert" style="background:rgba(0,214,50,0.08);border:1px solid rgba(0,214,50,0.2);color:#00d632;padding:12px;border-radius:10px;margin-bottom:20px;">
+                    ✅ Two-factor authentication is <strong>enabled</strong>
+                </div>
+                <hr style="border-color:rgba(255,255,255,0.06);margin:20px 0;">
+                <p style="font-size:13px;color:#6e7681;margin-bottom:12px;">To disable 2FA, enter your current authenticator code:</p>
+                <div class="form-group" style="margin-bottom:12px;">
+                    <input id="disableTotpCode" class="input" placeholder="6-digit code" maxlength="6" style="letter-spacing:6px;font-size:20px;text-align:center;">
+                </div>
+                <button class="btn btn-danger" style="width:100%;" onclick="disable2FA()">🔓 Disable 2FA</button>
+            </div>
+        </div>`;
+    } else {
+        content.innerHTML = `
+        <div class="card" style="max-width:500px;">
+            <div class="card-header">
+                <h3 class="card-title">🔑 Enable Two-Factor Authentication</h3>
+            </div>
+            <div class="card-body">
+                <p style="color:#8b949e;margin-bottom:20px;">Protect your account with Google Authenticator. You'll need to enter a 6-digit code each time you log in.</p>
+                <div class="alert" style="background:rgba(255,70,70,0.08);border:1px solid rgba(255,70,70,0.2);color:#ff6b6b;padding:12px;border-radius:10px;margin-bottom:20px;">
+                    ⚠️ 2FA is currently <strong>disabled</strong>. Your account is less secure.
+                </div>
+                <button class="btn btn-primary" style="width:100%;margin-bottom:16px;" onclick="setup2FA()">⚡ Set Up 2FA Now</button>
+                <div id="qrSetupArea" style="display:none;">
+                    <hr style="border-color:rgba(255,255,255,0.06);margin:20px 0;">
+                    <p style="font-size:13px;color:#8b949e;margin-bottom:12px;">1️⃣ Scan this QR code with <strong>Google Authenticator</strong>:</p>
+                    <div style="text-align:center;margin-bottom:16px;">
+                        <img id="qrCodeImg" src="" style="width:200px;height:200px;border-radius:12px;background:#fff;padding:8px;" alt="2FA QR Code">
+                    </div>
+                    <p style="font-size:13px;color:#8b949e;margin-bottom:4px;">Or enter this secret manually:</p>
+                    <code id="totpSecret" style="display:block;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:10px;font-size:13px;text-align:center;letter-spacing:2px;word-break:break-all;margin-bottom:16px;"></code>
+                    <p style="font-size:13px;color:#8b949e;margin-bottom:12px;">2️⃣ Enter the 6-digit code from the app to confirm:</p>
+                    <div class="form-group" style="margin-bottom:12px;">
+                        <input id="verifyTotpCode" class="input" placeholder="6-digit code" maxlength="6" style="letter-spacing:6px;font-size:20px;text-align:center;">
+                    </div>
+                    <button class="btn btn-primary" style="width:100%;" onclick="verify2FA()">✅ Activate 2FA</button>
+                </div>
+            </div>
+        </div>`;
+    }
+}
+
+async function setup2FA() {
+    try {
+        const data = await apiFetch('/api/2fa/setup');
+        document.getElementById('qrSetupArea').style.display = 'block';
+        document.getElementById('qrCodeImg').src = data.qr_code;
+        document.getElementById('totpSecret').textContent = data.secret;
+    } catch(e) {
+        showToast(e.message, 'error');
+    }
+}
+
+async function verify2FA() {
+    const code = document.getElementById('verifyTotpCode')?.value?.trim();
+    if (!code || code.length !== 6) return showToast('Enter a valid 6-digit code', 'error');
+    try {
+        await apiFetch('/api/2fa/verify', 'POST', { code });
+        showToast('✅ 2FA enabled! Your account is now protected.', 'success');
+        setTimeout(() => load2FA(), 1200);
+    } catch(e) {
+        showToast(e.message, 'error');
+    }
+}
+
+async function disable2FA() {
+    const code = document.getElementById('disableTotpCode')?.value?.trim();
+    if (!code || code.length !== 6) return showToast('Enter your current 6-digit code', 'error');
+    try {
+        await apiFetch('/api/2fa/disable', 'POST', { code });
+        showToast('2FA disabled.', 'info');
+        setTimeout(() => load2FA(), 1200);
+    } catch(e) {
+        showToast(e.message, 'error');
+    }
+}
+

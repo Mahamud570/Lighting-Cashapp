@@ -13,11 +13,17 @@ const io = new Server(server, { cors: { origin: '*' } });
 // Share io instance with Express routers
 app.set('io', io);
 
+// Rate Limiting
+const { invoiceLimiter, pollLimiter, apiLimiter } = require('./middleware/rateLimiter');
+
 // Middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
+
+// General API rate limit (authenticated routes)
+app.use('/api', apiLimiter);
 
 // Routes
 app.use('/', require('./routes/auth'));
@@ -29,7 +35,14 @@ app.use('/', require('./routes/users'));
 app.use('/', require('./routes/security'));
 app.use('/', require('./routes/sweeps'));
 app.use('/', require('./routes/webhooks'));
-app.use('/', require('./routes/pay'));
+app.use('/', require('./routes/twoFactor'));
+app.use('/', require('./routes/analytics'));
+
+// Rate-limited public pay routes
+const payRouter = require('./routes/pay');
+app.post('/api/pay/invoice', invoiceLimiter, (req, res, next) => next(), payRouter);
+app.get('/api/pay/invoice/:id/status', pollLimiter, (req, res, next) => next(), payRouter);
+app.use('/', payRouter);
 
 const auth = require('./middleware/auth');
 const PayoutService = require('./services/payoutService');

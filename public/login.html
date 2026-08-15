@@ -75,6 +75,10 @@ async function login() {
     const password = document.getElementById('password').value;
     const btn = document.getElementById('loginBtn');
     const err = document.getElementById('errorMsg');
+    
+    // Check if 2FA view is active
+    const totpCodeInput = document.getElementById('totpCode');
+    const totp_code = totpCodeInput ? totpCodeInput.value.trim() : null;
 
     if (!username || !password) {
         err.textContent = 'Please enter your username and password';
@@ -83,22 +87,47 @@ async function login() {
     }
 
     btn.disabled = true;
-    btn.textContent = 'Signing in...';
+    btn.textContent = totp_code ? 'Verifying 2FA...' : 'Signing in...';
     err.style.display = 'none';
 
     try {
+        const payload = { username, password };
+        if (totp_code) payload.totp_code = totp_code;
+
         const resp = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify(payload)
         });
         const data = await resp.json();
+
+        if (data.requires_2fa) {
+            // Transform login card to 2FA view
+            const formFields = document.querySelectorAll('.form-group');
+            formFields.forEach(f => f.style.display = 'none');
+            
+            let twofaGroup = document.getElementById('twofaGroup');
+            if (!twofaGroup) {
+                twofaGroup = document.createElement('div');
+                twofaGroup.id = 'twofaGroup';
+                twofaGroup.className = 'form-group';
+                twofaGroup.innerHTML = `
+                    <label class="form-label" style="color:var(--accent);">🔒 Two-Factor Auth Code</label>
+                    <input class="form-control" type="text" id="totpCode" placeholder="6-digit code" maxlength="6" style="letter-spacing:6px;font-size:20px;text-align:center;" autofocus onkeydown="if(event.key==='Enter')login()">
+                `;
+                btn.parentNode.insertBefore(twofaGroup, btn);
+            }
+            
+            btn.disabled = false;
+            btn.textContent = '🔑 Verify & Sign In';
+            return;
+        }
 
         if (!resp.ok) {
             err.textContent = data.error || 'Login failed';
             err.style.display = 'flex';
             btn.disabled = false;
-            btn.textContent = '⚡ Sign In';
+            btn.textContent = totp_code ? '🔑 Verify & Sign In' : '⚡ Sign In';
             return;
         }
 
@@ -107,7 +136,7 @@ async function login() {
         err.textContent = 'Connection error. Please try again.';
         err.style.display = 'flex';
         btn.disabled = false;
-        btn.textContent = '⚡ Sign In';
+        btn.textContent = totp_code ? '🔑 Verify & Sign In' : '⚡ Sign In';
     }
 }
 </script>

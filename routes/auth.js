@@ -3,7 +3,9 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const speakeasy = require('speakeasy');
 const db = require('../database/db');
+const { authLimiter } = require('../middleware/rateLimiter');
 
 // GET /login
 router.get('/login', (req, res) => {
@@ -16,7 +18,7 @@ router.get('/register', (req, res) => {
 });
 
 // POST /api/auth/login
-router.post('/api/auth/login', async (req, res) => {
+router.post('/api/auth/login', authLimiter, async (req, res) => {
     try {
         const { username, password } = req.body;
         if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
@@ -31,6 +33,24 @@ router.post('/api/auth/login', async (req, res) => {
 
         const valid = await bcrypt.compare(password, reseller.password);
         if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+
+        // 2FA Check — if enabled, require TOTP code before issuing JWT
+        if (reseller.totp_enabled && reseller.totp_secret) {
+            const { totp_code } = req.body;
+            if (!totp_code) {
+                // Signal frontend to show 2FA input
+                return res.status(200).json({ requires_2fa: true, message: 'Enter your 2FA code' });
+            }
+            const totpValid = speakeasy.totp.verify({
+                secret: reseller.totp_secret,
+                encoding: 'base32',
+                token: totp_code.replace(/\s/g, ''),
+                window: 2
+            });
+            if (!totpValid) {
+                return res.status(401).json({ error: 'Invalid 2FA code. Please try again.' });
+            }
+        }
 
         // Create JWT
         const token = jwt.sign(
@@ -73,7 +93,7 @@ router.post('/api/auth/login', async (req, res) => {
 });
 
 // POST /api/auth/register
-router.post('/api/auth/register', async (req, res) => {
+router.post('/api/auth/register', authLimiter, async (req, res) => {
     try {
         const { username, email, password } = req.body;
         if (!username || !email || !password) return res.status(400).json({ error: 'All fields required' });
