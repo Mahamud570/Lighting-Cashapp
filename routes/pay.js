@@ -221,8 +221,8 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
         if (qrTarget) {
             qrDataUrl = await qrcode.toDataURL(qrTarget, {
                 color: {
-                    dark: '#ffffff',
-                    light: '#00000000'
+                    dark: '#000000',
+                    light: '#ffffff'
                 },
                 margin: 1,
                 width: 320
