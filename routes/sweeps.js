@@ -55,6 +55,7 @@ router.post('/api/sweeps/save-config', auth, async (req, res) => {
             binance_auto_sweep_enabled,
             binance_sweep_threshold_usd,
             binance_sweep_type,
+            binance_sweep_wallet_balance_enabled,
             auto_payout_enabled,
             auto_payout_address,
             auto_payout_percent
@@ -70,6 +71,7 @@ router.post('/api/sweeps/save-config', auth, async (req, res) => {
                 binance_auto_sweep_enabled = ?,
                 binance_sweep_threshold_usd = ?,
                 binance_sweep_type = ?,
+                binance_sweep_wallet_balance_enabled = ?,
                 auto_payout_enabled = ?,
                 auto_payout_address = ?,
                 auto_payout_percent = ?
@@ -80,6 +82,7 @@ router.post('/api/sweeps/save-config', auth, async (req, res) => {
                 binance_auto_sweep_enabled ? 1 : 0,
                 parseFloat(binance_sweep_threshold_usd) || 0,
                 binance_sweep_type || 'lightning',
+                binance_sweep_wallet_balance_enabled ? 1 : 0,
                 auto_payout_enabled ? 1 : 0,
                 auto_payout_address || null,
                 parseFloat(auto_payout_percent) || 100,

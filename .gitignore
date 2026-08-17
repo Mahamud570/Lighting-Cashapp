@@ -24,3 +24,7 @@ Thumbs.db
 # IDE folders
 .vscode/
 .idea/
+
+# Archives & Coverage
+*.zip
+coverage/

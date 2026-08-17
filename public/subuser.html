@@ -1,0 +1,155 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🏪 Merchant Panel — Lightning Pay</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --bg-color: #0d1117;
+            --card-bg: rgba(22, 27, 38, 0.75);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --accent: #00d632;
+            --accent-glow: rgba(0, 214, 50, 0.25);
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --danger: #ef4444;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+        body { background: var(--bg-color); color: var(--text-main); min-height: 100vh; display: flex; flex-direction: column; }
+
+        header {
+            background: rgba(13, 17, 23, 0.9);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1.25rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(12px);
+            position: sticky; top: 0; z-index: 100;
+        }
+
+        .brand { font-size: 1.4rem; font-weight: 800; display: flex; align-items: center; gap: 0.6rem; color: #fff; }
+        .brand-badge { background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); font-size: 0.75rem; font-weight: 800; padding: 0.2rem 0.6rem; border-radius: 20px; text-transform: uppercase; }
+
+        .btn { padding: 0.6rem 1.2rem; border-radius: 8px; font-weight: 600; font-size: 0.9rem; cursor: pointer; border: none; transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 0.5rem; }
+        .btn-primary { background: var(--accent); color: #000; box-shadow: 0 0 15px var(--accent-glow); }
+        .btn-secondary { background: rgba(255, 255, 255, 0.05); color: var(--text-main); border: 1px solid var(--border-color); }
+        .btn-danger { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+
+        main { padding: 2rem; max-width: 1300px; margin: 0 auto; width: 100%; flex: 1; }
+
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.25rem; margin-bottom: 2rem; }
+        .stat-card { background: var(--card-bg); border: 1px solid var(--border-color); padding: 1.5rem; border-radius: 14px; backdrop-filter: blur(10px); }
+        .stat-label { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; }
+        .stat-value { font-size: 1.8rem; font-weight: 800; color: var(--accent); }
+
+        .table-container { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 14px; overflow: hidden; backdrop-filter: blur(10px); margin-bottom: 2rem; }
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th { background: rgba(255, 255, 255, 0.03); padding: 1rem 1.25rem; font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; border-bottom: 1px solid var(--border-color); }
+        td { padding: 1rem 1.25rem; border-bottom: 1px solid rgba(255, 255, 255, 0.04); font-size: 0.9rem; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="brand">
+            ⚡ Lightning Pay
+            <span class="brand-badge">🏪 Merchant Panel</span>
+        </div>
+        <div>
+            <span id="merchantName" style="font-weight:600; margin-right:1rem;">Loading...</span>
+            <button class="btn btn-danger" onclick="logout()">
+                <i class="fa-solid fa-right-from-bracket"></i> Logout
+            </button>
+        </div>
+    </header>
+
+    <main>
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Merchant Balance</div>
+                <div class="stat-value" id="merchantBalance">$0.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Exchange Rate / Dollar</div>
+                <div class="stat-value" id="merchantRate">1.00</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Total Payment Volume</div>
+                <div class="stat-value" id="merchantVolume" style="color:#38bdf8;">$0.00</div>
+            </div>
+        </div>
+
+        <div class="table-container">
+            <div style="padding: 1.25rem; font-weight:700; font-size:1.1rem; border-bottom:1px solid var(--border-color);">
+                <i class="fa-solid fa-link" style="color:var(--accent)"></i> My Payment Links
+            </div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Title</th>
+                        <th>Slug / Link URL</th>
+                        <th>Fixed Amount</th>
+                        <th>Created</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="linksTable">
+                    <tr><td colspan="5" style="text-align:center; padding: 2rem;">Loading payment links...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+
+    <script>
+        async function loadProfile() {
+            try {
+                const res = await fetch('/api/me');
+                if (!res.ok) throw new Error('Not authenticated');
+                const user = await res.json();
+                document.getElementById('merchantName').innerText = user.username;
+            } catch (err) {
+                window.location.href = '/login';
+            }
+        }
+
+        async function loadLinks() {
+            try {
+                const res = await fetch('/api/links');
+                const list = await res.json();
+                const tbody = document.getElementById('linksTable');
+                if (!list.length) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 2rem;">No payment links found. Contact your panel reseller to issue links.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = list.map(l => `
+                    <tr>
+                        <td><strong>${l.title}</strong></td>
+                        <td><a href="/pay/${l.slug}" target="_blank" style="color:var(--accent); text-decoration:none;">/pay/${l.slug}</a></td>
+                        <td>${l.fixed_amount ? '$' + l.fixed_amount : 'Open Amount'}</td>
+                        <td>${new Date(l.created_at).toLocaleDateString()}</td>
+                        <td>
+                            <button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="navigator.clipboard.writeText(window.location.origin + '/pay/${l.slug}'); alert('Link copied!');">
+                                <i class="fa-solid fa-copy"></i> Copy Link
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) {
+                console.error(err);
+            }
+        }
+
+        async function logout() {
+            await fetch('/api/auth/logout', { method: 'POST' });
+            window.location.href = '/login';
+        }
+
+        loadProfile();
+        loadLinks();
+    </script>
+</body>
+</html>

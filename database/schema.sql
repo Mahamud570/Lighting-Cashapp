@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS resellers (
     username TEXT UNIQUE NOT NULL,
     email TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
+    plain_password TEXT,
     totp_secret TEXT,
     totp_enabled INTEGER DEFAULT 0,
     wallet_type TEXT CHECK(wallet_type IN ('email','opennode','btcpay','lnbits','blink','alby')),
@@ -21,8 +22,11 @@ CREATE TABLE IF NOT EXISTS resellers (
     lnbits_url TEXT,
     lnbits_invoice_key TEXT,
     lnbits_admin_key TEXT,
-    -- Blink Credentials
+    -- Role: owner (Master Boss) or reseller
+    role TEXT DEFAULT 'reseller' CHECK(role IN ('owner','reseller')),
+    -- Blink Credentials & Multi-Key Pool
     blink_api_key TEXT,
+    blink_api_keys TEXT, -- JSON array of Blink API keys for rotation/limit bypass
     blink_wallet_id TEXT,
     -- Alby / NWC Credentials
     alby_nwc_string TEXT,
@@ -34,6 +38,7 @@ CREATE TABLE IF NOT EXISTS resellers (
     binance_auto_sweep_enabled INTEGER DEFAULT 0,
     binance_sweep_threshold_usd REAL DEFAULT 0,
     binance_sweep_type TEXT DEFAULT 'lightning' CHECK(binance_sweep_type IN ('lightning','onchain')),
+    binance_sweep_wallet_balance_enabled INTEGER DEFAULT 0,
     -- Instant LN Payout Config
     auto_payout_enabled INTEGER DEFAULT 0,
     auto_payout_address TEXT,
@@ -51,6 +56,7 @@ CREATE TABLE IF NOT EXISTS sub_users (
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
     password TEXT NOT NULL,
+    plain_password TEXT,
     rate_per_dollar REAL DEFAULT 1.0,
     charge_mode TEXT DEFAULT 'inherit' CHECK(charge_mode IN ('inherit','none','fixed','percent')),
     charge_value REAL DEFAULT 0,
@@ -68,7 +74,7 @@ CREATE TABLE IF NOT EXISTS payment_links (
     title TEXT NOT NULL,
     brand_name TEXT DEFAULT 'Cash Pay',
     logo_path TEXT,
-    domain TEXT DEFAULT 'localhost:3000',
+    domain TEXT DEFAULT 'portal-cash-app.com',
     theme TEXT DEFAULT 'default',
     amount_type TEXT DEFAULT 'open' CHECK(amount_type IN ('fixed','open')),
     fixed_amount REAL,
@@ -108,6 +114,7 @@ CREATE TABLE IF NOT EXISTS payments (
     lightning_invoice TEXT,
     payment_request TEXT,
     payer_ip TEXT,
+    payer_location TEXT,
     payer_note TEXT,
     receiving_wallet TEXT,
     status TEXT DEFAULT 'pending' CHECK(status IN ('pending','paid','failed','expired')),
@@ -212,6 +219,7 @@ INSERT OR IGNORE INTO payment_themes (id, name, key_name, accent_color, bg_color
 (7, 'Beauty Queen', 'beauty_queen', '#ff6eb4', '#1a0a1a', 1),
 (8, 'Beauty Queen V2', 'beauty_queen_v2', '#e040fb', '#12001a', 1);
 
--- Default admin account (password: admin123)
-INSERT OR IGNORE INTO resellers (id, username, email, password, status) VALUES
-(1, 'admin', 'admin@lightningpay.local', '$2a$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'active')
+-- Default admin account (password: admin123, role: owner)
+INSERT OR IGNORE INTO resellers (id, username, email, password, role, status) VALUES
+(1, 'admin', 'admin@lightningpay.local', '$2a$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'owner', 'active');
+

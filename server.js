@@ -5,6 +5,8 @@ const { Server } = require('socket.io');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
+const axios = require('axios'); // top-level (A-005 fix)
+const InvoiceChecker = require('./services/invoiceChecker'); // DRY fix BUG-003
 
 const app = express();
 const server = http.createServer(app);
@@ -37,6 +39,7 @@ app.use('/', require('./routes/sweeps'));
 app.use('/', require('./routes/webhooks'));
 app.use('/', require('./routes/twoFactor'));
 app.use('/', require('./routes/analytics'));
+app.use('/', require('./routes/owner'));
 
 // Rate-limited public pay routes
 const payRouter = require('./routes/pay');
@@ -46,21 +49,39 @@ app.use('/', payRouter);
 
 const auth = require('./middleware/auth');
 const PayoutService = require('./services/payoutService');
-const LNbitsService = require('./services/lnbitsService');
-const BlinkService = require('./services/blinkService');
+
+const { requireRole } = auth;
 
 // GET /api/me - current user info
 app.get('/api/me', auth, (req, res) => {
-    res.json({ id: req.reseller.id, username: req.reseller.username, email: req.reseller.email });
+    res.json({
+        id: req.reseller.id,
+        username: req.reseller.username,
+        email: req.reseller.email,
+        role: req.role || req.reseller.role || 'reseller'
+    });
 });
 
-// Dashboard SPA - all /reseller/* routes serve the app shell
+// Boss / Master Panel SPA
+app.get('/owner*', auth, requireRole('owner'), (req, res) => {
+    res.sendFile('owner.html', { root: './public' });
+});
+
+// Merchant / Sub-User Panel SPA
+app.get('/subuser*', auth, (req, res) => {
+    res.sendFile('subuser.html', { root: './public' });
+});
+
+// Reseller Dashboard SPA
 app.get('/reseller*', auth, (req, res) => {
     res.sendFile('app.html', { root: './public' });
 });
 
-// Root redirect
-app.get('/', (req, res) => res.redirect('/reseller'));
+// Root redirect based on role (or fallback to /login)
+app.get('/', (req, res) => {
+    if (req.cookies?.auth_token) return res.redirect('/reseller');
+    res.redirect('/login');
+});
 
 // 404
 app.use((req, res) => {
@@ -78,60 +99,32 @@ io.on('connection', (socket) => {
     });
 });
 
-// Poll pending payments every 10s and broadcast updates + trigger auto-settlements
-setInterval(async () => {
+// ─── Poll pending payments every 10 s ────────────────────────────────────────
+// Uses InvoiceChecker (shared with routes/pay.js) — DRY fix BUG-003.
+const paymentPollInterval = setInterval(async () => {
     try {
         const [pending] = await db.query(
-            `SELECT p.*, r.opennode_api_key, r.opennode_env, r.wallet_type, r.btcpay_url, r.btcpay_store_id, r.btcpay_api_key,
+            `SELECT p.*,
+                    r.wallet_type, r.opennode_api_key, r.opennode_env,
                     r.lnbits_url, r.lnbits_invoice_key,
-                    r.blink_api_key, r.blink_wallet_id
-             FROM payments p LEFT JOIN resellers r ON p.reseller_id = r.id
+                    r.blink_api_key, r.blink_api_keys, r.blink_wallet_id,
+                    r.verify_url
+             FROM payments p
+             LEFT JOIN resellers r ON p.reseller_id = r.id
              WHERE p.status = 'pending' AND p.expires_at > datetime('now')
              LIMIT 50`
         );
 
         for (const payment of pending) {
-            let newStatus = null;
-
-            if (payment.wallet_type === 'blink' && payment.blink_api_key && payment.invoice_id) {
-                try {
-                    const check = await BlinkService.checkInvoice({
-                        apiKey: payment.blink_api_key,
-                        paymentHash: payment.invoice_id
-                    });
-                    if (check.paid) newStatus = 'paid';
-                } catch (e) {}
-            } else if (payment.wallet_type === 'lnbits' && payment.lnbits_invoice_key && payment.invoice_id) {
-                try {
-                    const check = await LNbitsService.checkInvoice({
-                        url: payment.lnbits_url,
-                        invoiceKey: payment.lnbits_invoice_key,
-                        paymentHash: payment.invoice_id
-                    });
-                    if (check.paid) newStatus = 'paid';
-                } catch (e) {}
-            } else if (payment.verify_url) {
-                try {
-                    const axios = require('axios');
-                    const resp = await axios.get(payment.verify_url, { timeout: 3000 });
-                    if (resp.data && (resp.data.settled === true || resp.data.status === 'PAID')) {
-                        newStatus = 'paid';
-                    }
-                } catch(e) {}
-            } else if (payment.wallet_type === 'opennode' && payment.invoice_id) {
-                try {
-                    const axios = require('axios');
-                    const base = payment.opennode_env === 'dev' ? 'https://dev-api.opennode.com' : 'https://api.opennode.com';
-                    const resp = await axios.get(`${base}/v1/charges/${payment.invoice_id}`, {
-                        headers: { Authorization: payment.opennode_api_key }
-                    });
-                    if (resp.data.data.status === 'paid') newStatus = 'paid';
-                    if (resp.data.data.status === 'expired') newStatus = 'expired';
-                } catch (e) {}
-            }
+            // Delegate to InvoiceChecker — single source of truth
+            const { paid, expired } = await InvoiceChecker.check(payment);
+            const newStatus = paid ? 'paid' : (expired ? 'expired' : null);
 
             if (newStatus) {
-                await db.query("UPDATE payments SET status = ?, paid_at = datetime('now') WHERE id = ?", [newStatus, payment.id]);
+                await db.query(
+                    "UPDATE payments SET status = ?, paid_at = datetime('now') WHERE id = ?",
+                    [newStatus, payment.id]
+                );
                 io.to(`reseller:${payment.reseller_id}`).emit('payment:update', { id: payment.id, status: newStatus });
                 io.to(`payment:${payment.id}`).emit('status', { status: newStatus });
 
@@ -143,14 +136,25 @@ setInterval(async () => {
             }
         }
 
-        // Expire overdue
+        // Expire overdue invoices
         await db.query("UPDATE payments SET status = 'expired' WHERE status = 'pending' AND expires_at <= datetime('now')");
     } catch (err) {
-        // silent
+        // Silent — individual payment failures should not crash the poll loop
     }
 }, 10000);
 
+// ─── Balance sweep every 60 s ────────────────────────────────────────────────
+const sweepInterval = setInterval(async () => {
+    try {
+        await PayoutService.checkAndSweepBalances(app.get('io'));
+    } catch (err) {
+        console.error('Error in scheduled wallet balance auto-sweep:', err);
+    }
+}, 60000);
+
 const PORT = process.env.PORT || 3000;
+const telegramBotEngine = require('./services/telegramBotEngine');
+
 server.listen(PORT, () => {
     console.log(`\n⚡ Lightning Pay running at http://localhost:${PORT}`);
     console.log(`   Dashboard: http://localhost:${PORT}/reseller`);
@@ -158,9 +162,27 @@ server.listen(PORT, () => {
 
     // Start Interactive Telegram Bot Engine
     try {
-        const telegramBotEngine = require('./services/telegramBotEngine');
         telegramBotEngine.start();
-    } catch(e) {
+    } catch (e) {
         console.error('Telegram bot engine init error:', e.message);
     }
 });
+
+// ─── Graceful shutdown — M-001, M-002 fix ────────────────────────────────────
+// Clears both setInterval loops and stops the Telegram bot before process exit
+// to prevent resource leaks and WAL journal lock on Windows.
+const gracefulShutdown = (signal) => {
+    console.log(`\n[server] ${signal} received — shutting down gracefully…`);
+    clearInterval(paymentPollInterval);
+    clearInterval(sweepInterval);
+    try { telegramBotEngine.stop(); } catch (_) {}
+    server.close(() => {
+        console.log('[server] HTTP server closed.');
+        process.exit(0);
+    });
+    // Force-exit after 10 s if server.close() stalls
+    setTimeout(() => process.exit(1), 10000).unref();
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));

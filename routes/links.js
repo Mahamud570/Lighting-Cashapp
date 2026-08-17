@@ -6,7 +6,9 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// File upload config
+// File upload config — images only (S-005 fix: accept only image MIME types)
+const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
         const dir = './public/uploads/logos';
@@ -14,11 +16,29 @@ const storage = multer.diskStorage({
         cb(null, dir);
     },
     filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname);
+        const ext = path.extname(file.originalname).toLowerCase();
         cb(null, `logo_${req.reseller.id}_${Date.now()}${ext}`);
     }
 });
-const upload = multer({ storage, limits: { fileSize: 2 * 1024 * 1024 } });
+
+const upload = multer({
+    storage,
+    limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
+    fileFilter: (req, file, cb) => {
+        if (ALLOWED_IMAGE_TYPES.has(file.mimetype)) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only image files are allowed (jpg, png, gif, webp)'), false);
+        }
+    }
+});
+
+// Slugs that would collide with existing API/page routes
+const RESERVED_SLUGS = new Set([
+    'api', 'admin', 'login', 'register', 'logout', 'reseller',
+    'pay', 'dashboard', 'webhook', 'webhooks', 'static', 'uploads',
+    'health', 'status', 'metrics'
+]);
 
 // GET /api/links - list all payment links
 router.get('/api/links', auth, async (req, res) => {
@@ -46,8 +66,15 @@ router.post('/api/links', auth, upload.single('logo'), async (req, res) => {
 
         if (!slug || !title) return res.status(400).json({ error: 'Slug and title are required' });
 
+        const cleanSlug = slug.toLowerCase().replace(/[^a-z0-9-_]/g, '');
+
+        // Prevent squatting reserved route namespaces
+        if (RESERVED_SLUGS.has(cleanSlug)) {
+            return res.status(400).json({ error: `'${cleanSlug}' is a reserved name and cannot be used as a slug` });
+        }
+
         // Check slug uniqueness
-        const [existing] = await db.query('SELECT id FROM payment_links WHERE slug = ?', [slug]);
+        const [existing] = await db.query('SELECT id FROM payment_links WHERE slug = ?', [cleanSlug]);
         if (existing.length) return res.status(400).json({ error: 'This payment link URL is already taken' });
 
         const logoPath = req.file ? `/uploads/logos/${req.file.filename}` : null;
@@ -58,16 +85,16 @@ router.post('/api/links', auth, upload.single('logo'), async (req, res) => {
             [
                 req.reseller.id,
                 sub_user_id || null,
-                slug.toLowerCase().replace(/[^a-z0-9-_]/g, ''),
-                title,
-                brand_name || 'Cash Pay',
+                cleanSlug,
+                String(title).substring(0, 100),                      // max 100 chars
+                String(brand_name || 'Cash Pay').substring(0, 60),    // max 60 chars
                 logoPath,
-                domain || 'localhost:3000',
+                domain || req.get('host') || 'portal-cash-app.com',
                 theme || 'default',
                 amount_type || 'open',
                 fixed_amount || null,
-                min_amount || 1,
-                max_amount || 2000
+                min_amount   || 1,
+                max_amount   || 2000
             ]
         );
 

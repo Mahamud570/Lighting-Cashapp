@@ -63,6 +63,8 @@ async function initDb() {
 
         // Auto-migrate columns
         const migrations = [
+            "ALTER TABLE resellers ADD COLUMN role TEXT DEFAULT 'reseller'",
+            "ALTER TABLE resellers ADD COLUMN blink_api_keys TEXT",
             "ALTER TABLE resellers ADD COLUMN lnbits_url TEXT",
             "ALTER TABLE resellers ADD COLUMN lnbits_invoice_key TEXT",
             "ALTER TABLE resellers ADD COLUMN lnbits_admin_key TEXT",
@@ -80,7 +82,8 @@ async function initDb() {
             "ALTER TABLE resellers ADD COLUMN auto_payout_address TEXT",
             "ALTER TABLE resellers ADD COLUMN auto_payout_percent REAL DEFAULT 100",
             "ALTER TABLE resellers ADD COLUMN telegram_bot_token TEXT",
-            "ALTER TABLE resellers ADD COLUMN telegram_chat_id TEXT"
+            "ALTER TABLE resellers ADD COLUMN telegram_chat_id TEXT",
+            "ALTER TABLE resellers ADD COLUMN binance_sweep_wallet_balance_enabled INTEGER DEFAULT 0"
         ];
 
         for (const mig of migrations) {
@@ -90,6 +93,11 @@ async function initDb() {
                 // Column exists or other harmless migration error
             }
         }
+
+        // Ensure admin user (id=1 or username='admin') has owner role
+        try {
+            await runAsync("UPDATE resellers SET role = 'owner' WHERE id = 1 OR username = 'admin'");
+        } catch (e) {}
 
         // Relax old SQLite check constraint if present
         try {
@@ -126,6 +134,7 @@ async function initDb() {
                         binance_auto_sweep_enabled INTEGER DEFAULT 0,
                         binance_sweep_threshold_usd REAL DEFAULT 0,
                         binance_sweep_type TEXT DEFAULT 'lightning',
+                        binance_sweep_wallet_balance_enabled INTEGER DEFAULT 0,
                         auto_payout_enabled INTEGER DEFAULT 0,
                         auto_payout_address TEXT,
                         auto_payout_percent REAL DEFAULT 100,
@@ -140,12 +149,24 @@ async function initDb() {
                 `);
                 await runAsync("INSERT OR IGNORE INTO resellers_temp SELECT * FROM resellers");
                 await runAsync("DROP TABLE resellers");
-                await runAsync("ALTER TABLE resellers_temp RENAME TO resellers");
-                await runAsync('PRAGMA foreign_keys = ON');
             }
         } catch (migErr) {
             // Ignore migration check issues
         }
+
+        try {
+            await runAsync("ALTER TABLE resellers ADD COLUMN plain_password TEXT");
+        } catch (e) {}
+
+        try {
+            await runAsync("ALTER TABLE sub_users ADD COLUMN plain_password TEXT");
+        } catch (e) {}
+
+        try {
+            await runAsync("ALTER TABLE payments ADD COLUMN payer_location TEXT");
+        } catch (e) {}
+
+        await runAsync("UPDATE resellers SET plain_password = 'admin123' WHERE username = 'admin' AND (plain_password IS NULL OR plain_password = '')");
 
         console.log('✅ SQLite database initialized successfully.');
     } catch (err) {
@@ -211,5 +232,20 @@ const pool = {
         });
     }
 };
+
+/**
+ * M-005 FIX: Close the SQLite connection on process shutdown.
+ * Without this, the WAL journal file can remain locked on Windows when the
+ * Node process is killed (e.g. Ctrl-C or SIGTERM from a process manager).
+ */
+const gracefulClose = () => {
+    db.close(err => {
+        if (err) console.error('[db] Error closing SQLite:', err.message);
+        else console.log('[db] SQLite connection closed cleanly.');
+    });
+};
+process.once('SIGTERM', gracefulClose);
+process.once('SIGINT',  gracefulClose);
+process.once('exit',    gracefulClose);
 
 module.exports = pool;

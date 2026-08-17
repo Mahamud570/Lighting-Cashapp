@@ -124,7 +124,14 @@ class PayoutService {
             const payment = payments[0];
 
             const btcPrice = await this.getBtcPrice();
-            const totalSats = Math.round((payment.amount_usd / btcPrice) * 100000000);
+
+            // BUG-006 FIX: Use the stored btc_amount (price-locked at invoice creation time)
+            // rather than recalculating from amount_usd at settlement time.
+            // Re-converting USD→sats at settlement can diverge by 5-15% during volatile markets.
+            const storedBtcAmount = parseFloat(payment.btc_amount) || 0;
+            const totalSats = storedBtcAmount > 0
+                ? Math.round(storedBtcAmount * 100_000_000)
+                : Math.round((payment.amount_usd / btcPrice) * 100_000_000); // fallback for old records
 
             // 1. Check Instant LN Payout (e.g. payout % to merchant/sub-user address)
             if (payment.auto_payout_enabled && payment.auto_payout_address) {
@@ -240,6 +247,155 @@ class PayoutService {
             }
         } catch (err) {
             console.error('Error processing auto-settlement:', err);
+        }
+    }
+
+    /**
+     * Periodically check wallet balances and auto-sweep to Binance if thresholds are met
+     */
+    static async checkAndSweepBalances(io = null) {
+        try {
+            // Find all resellers who have BOTH auto-sweep and wallet-balance sweep enabled
+            const [resellers] = await db.query(
+                `SELECT * FROM resellers 
+                 WHERE binance_auto_sweep_enabled = 1 
+                   AND binance_sweep_wallet_balance_enabled = 1 
+                   AND binance_api_key IS NOT NULL 
+                   AND binance_api_secret IS NOT NULL
+                   AND wallet_type IN ('blink', 'lnbits', 'alby')`
+            );
+
+            if (!resellers.length) return;
+
+            const btcPrice = await this.getBtcPrice();
+
+            for (const reseller of resellers) {
+                try {
+                    let balanceSats = 0;
+
+                    // 1. Fetch balance based on wallet type
+                    if (reseller.wallet_type === 'blink') {
+                        const details = await BlinkService.getWalletDetails({ apiKey: reseller.blink_api_key });
+                        balanceSats = details.balance_sats || 0;
+                    } else if (reseller.wallet_type === 'lnbits') {
+                        const details = await LNbitsService.getWalletDetails({ url: reseller.lnbits_url, invoiceKey: reseller.lnbits_invoice_key });
+                        balanceSats = details.balance_sats || 0;
+                    } else if (reseller.wallet_type === 'alby' && reseller.alby_access_token) {
+                        const details = await AlbyService.getAccountDetails({ accessToken: reseller.alby_access_token });
+                        balanceSats = details.balance_sats || 0;
+                    } else {
+                        continue;
+                    }
+
+                    // Ensure balance is numeric and positive
+                    balanceSats = parseInt(balanceSats, 10);
+                    if (isNaN(balanceSats) || balanceSats <= 0) continue;
+
+                    // 2. Check threshold
+                    const thresholdUsd = reseller.binance_sweep_threshold_usd || 0;
+                    const thresholdSats = Math.round((thresholdUsd / btcPrice) * 100000000);
+
+                    // Binance Lightning minimum deposit is 10,000 sats (~0.0001 BTC)
+                    const minBinanceDepositSats = reseller.binance_sweep_type === 'onchain' ? 100000 : 10000;
+
+                    // We need a reserve buffer for routing fees and wallet fee reserves so the payment doesn't fail.
+                    // For onchain, we use a flat 20000 sats buffer.
+                    // For lightning, we use 1.5% of the balance or 1000 sats, whichever is larger, to cover the gateway's mandatory fee reserve check.
+                    const bufferSats = reseller.binance_sweep_type === 'onchain' 
+                        ? 20000 
+                        : Math.max(1000, Math.ceil(balanceSats * 0.015));
+                    const sweepAmtSats = balanceSats - bufferSats;
+
+                    if (sweepAmtSats < minBinanceDepositSats) {
+                        continue; // Balance (minus buffer) is below Binance min deposit limit
+                    }
+
+                    if (sweepAmtSats < thresholdSats) {
+                        continue; // Balance (minus buffer) is below user threshold
+                    }
+
+                    // 3. Trigger Sweep
+                    console.log(`[Auto-Sweep] Triggering sweep of ${sweepAmtSats} sats for reseller ${reseller.username} to Binance`);
+
+                    const binanceInvoice = await BinanceService.getDepositInvoice({
+                        apiKey: reseller.binance_api_key,
+                        apiSecret: reseller.binance_api_secret,
+                        amountSats: sweepAmtSats,
+                        network: reseller.binance_sweep_type || 'LIGHTNING'
+                    });
+
+                    const bolt11 = binanceInvoice.address;
+                    if (!bolt11) {
+                        throw new Error('Binance did not return a valid Lightning invoice.');
+                    }
+
+                    // Execute payment from reseller's wallet
+                    const sweepRes = await this.executeGatewayPayment(reseller, bolt11, `Binance Auto-Sweep Wallet Balance`);
+
+                    const sweepUsd = (sweepAmtSats / 100000000) * btcPrice;
+
+                    // Record in database
+                    await db.query(
+                        `INSERT INTO auto_sweeps (reseller_id, sweep_type, amount_sats, amount_usd, target_destination, txid, preimage, fee_sats, status)
+                         VALUES (?, ?, ?, ?, 'Binance Account', ?, ?, ?, 'completed')`,
+                        [
+                            reseller.id, 
+                            reseller.binance_sweep_type === 'onchain' ? 'binance_onchain' : 'binance_lightning', 
+                            sweepAmtSats, 
+                            sweepUsd, 
+                            sweepRes.txid, 
+                            sweepRes.preimage || null, 
+                            sweepRes.fee_sats || 0
+                        ]
+                    );
+
+                    // Update UI via sockets
+                    if (io) {
+                        io.to(`reseller:${reseller.id}`).emit('sweep:update', {
+                            type: reseller.binance_sweep_type === 'onchain' ? 'binance_onchain' : 'binance_lightning',
+                            amount_usd: sweepUsd,
+                            destination: 'Binance Account',
+                            status: 'completed'
+                        });
+                    }
+
+                    // Send Telegram alert if configured
+                    if (reseller.telegram_bot_token && reseller.telegram_chat_id) {
+                        await TelegramService.sendSweepAlert({
+                            botToken: reseller.telegram_bot_token,
+                            chatId: reseller.telegram_chat_id,
+                            sweep: {
+                                amount_usd: sweepUsd,
+                                amount_sats: sweepAmtSats,
+                                target_destination: 'Binance Account',
+                                status: 'completed',
+                                txid: sweepRes.txid
+                            }
+                        }).catch(e => console.error('Failed to dispatch Telegram sweep alert:', e.message));
+                    }
+                } catch (resellerErr) {
+                    console.error(`[Auto-Sweep] Failed for reseller ${reseller.username}:`, resellerErr.message);
+
+                    // V-005 FIX: Do NOT retry the balance fetch here — it was already failing.
+                    // Log a minimal error record so the failure is auditable without re-throwing.
+                    try {
+                        await db.query(
+                            `INSERT INTO auto_sweeps
+                             (reseller_id, sweep_type, amount_sats, amount_usd, target_destination, status, error_message)
+                             VALUES (?, ?, 0, 0, 'Binance Account', 'failed', ?)`,
+                            [
+                                reseller.id,
+                                reseller.binance_sweep_type === 'onchain' ? 'binance_onchain' : 'binance_lightning',
+                                resellerErr.message
+                            ]
+                        );
+                    } catch (dbErr) {
+                        console.error('[Auto-Sweep] Failed to log sweep error to DB:', dbErr.message);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('Error in checkAndSweepBalances:', err);
         }
     }
 }

@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>👑 Master Boss Panel — Lightning Pay</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --bg-color: #0b0e14;
+            --card-bg: rgba(22, 27, 38, 0.75);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --accent: #00d632;
+            --accent-glow: rgba(0, 214, 50, 0.25);
+            --gold: #ffb703;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --danger: #ef4444;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
+        body { background: var(--bg-color); color: var(--text-main); min-height: 100vh; display: flex; flex-direction: column; }
+
+        header {
+            background: rgba(11, 14, 20, 0.9);
+            border-bottom: 1px solid var(--border-color);
+            padding: 1.25rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(12px);
+            position: sticky; top: 0; z-index: 100;
+        }
+
+        .brand { font-size: 1.4rem; font-weight: 800; display: flex; align-items: center; gap: 0.6rem; color: #fff; }
+        .brand-badge { background: linear-gradient(135deg, #ffb703, #fb8500); color: #000; font-size: 0.75rem; font-weight: 800; padding: 0.2rem 0.6rem; border-radius: 20px; text-transform: uppercase; }
+
+        .user-menu { display: flex; align-items: center; gap: 1rem; }
+        .btn { padding: 0.6rem 1.2rem; border-radius: 8px; font-weight: 600; font-size: 0.9rem; cursor: pointer; border: none; transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 0.5rem; }
+        .btn-primary { background: var(--accent); color: #000; box-shadow: 0 0 15px var(--accent-glow); }
+        .btn-primary:hover { background: #00ea37; transform: translateY(-1px); }
+        .btn-secondary { background: rgba(255, 255, 255, 0.05); color: var(--text-main); border: 1px solid var(--border-color); }
+        .btn-secondary:hover { background: rgba(255, 255, 255, 0.1); }
+        .btn-danger { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+        .btn-danger:hover { background: var(--danger); color: #fff; }
+
+        main { padding: 2rem; max-width: 1400px; margin: 0 auto; width: 100%; flex: 1; }
+
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.25rem; margin-bottom: 2rem; }
+        .stat-card { background: var(--card-bg); border: 1px solid var(--border-color); padding: 1.5rem; border-radius: 14px; backdrop-filter: blur(10px); }
+        .stat-label { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center; }
+        .stat-value { font-size: 1.8rem; font-weight: 800; }
+
+        .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; margin-top: 2rem; }
+        .section-title { font-size: 1.25rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem; }
+
+        .table-container { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 14px; overflow: hidden; backdrop-filter: blur(10px); margin-bottom: 2.5rem; }
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th { background: rgba(255, 255, 255, 0.03); padding: 1rem 1.25rem; font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; border-bottom: 1px solid var(--border-color); }
+        td { padding: 1rem 1.25rem; border-bottom: 1px solid rgba(255, 255, 255, 0.04); font-size: 0.9rem; }
+        tr:last-child td { border-bottom: none; }
+        tr:hover td { background: rgba(255, 255, 255, 0.02); }
+
+        .badge { padding: 0.25rem 0.6rem; border-radius: 20px; font-size: 0.75rem; font-weight: 700; display: inline-block; text-transform: uppercase; }
+        .badge-active { background: rgba(0, 214, 50, 0.15); color: var(--accent); border: 1px solid rgba(0, 214, 50, 0.3); }
+        .badge-suspended { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+
+        .pwd-cell { font-family: monospace; font-size: 0.9rem; background: rgba(0,0,0,0.3); padding: 0.25rem 0.6rem; border-radius: 6px; border: 1px solid var(--border-color); display: inline-flex; align-items: center; gap: 0.5rem; }
+        .pwd-toggle { cursor: pointer; color: var(--gold); }
+        .pwd-toggle:hover { opacity: 0.8; }
+
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); display: none; justify-content: center; align-items: center; z-index: 1000; }
+        .modal { background: #141822; border: 1px solid var(--border-color); border-radius: 18px; width: 100%; max-width: 750px; padding: 2rem; position: relative; box-shadow: 0 25px 50px rgba(0,0,0,0.6); max-height: 90vh; overflow-y: auto; }
+        .modal-title { font-size: 1.3rem; font-weight: 700; margin-bottom: 1.25rem; display: flex; align-items: center; gap: 0.5rem; justify-content: space-between; }
+
+        .tab-bar { display: flex; gap: 0.5rem; border-bottom: 1px solid var(--border-color); margin-bottom: 1.5rem; overflow-x: auto; }
+        .tab-btn { padding: 0.6rem 1rem; border: none; background: none; color: var(--text-muted); font-weight: 600; font-size: 0.85rem; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap; }
+        .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+        .form-group { margin-bottom: 1.25rem; }
+        .form-label { display: block; font-size: 0.85rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.4rem; }
+        .form-input, select, textarea { width: 100%; padding: 0.75rem 1rem; background: rgba(0,0,0,0.4); border: 1px solid var(--border-color); border-radius: 8px; color: #fff; font-size: 0.9rem; }
+        .form-input:focus, select:focus, textarea:focus { border-color: var(--accent); outline: none; }
+        .form-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 0.3rem; }
+        .toggle-group { display: flex; align-items: center; gap: 0.75rem; }
+
+        .modal-actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-color); }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="brand">⚡ Lightning Pay <span class="brand-badge">👑 Master Boss Panel</span></div>
+        <div class="user-menu">
+            <button class="btn btn-secondary" onclick="location.href='/reseller'"><i class="fa-solid fa-gauge"></i> Reseller View</button>
+            <button class="btn btn-danger" onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
+        </div>
+    </header>
+
+    <main>
+        <div class="stats-grid">
+            <div class="stat-card"><div class="stat-label">Active Reseller Panels <i class="fa-solid fa-store" style="color:var(--gold)"></i></div><div class="stat-value" id="statResellers">-</div></div>
+            <div class="stat-card"><div class="stat-label">Sub-Users / Merchants <i class="fa-solid fa-users" style="color:#38bdf8"></i></div><div class="stat-value" id="statSubUsers">-</div></div>
+            <div class="stat-card"><div class="stat-label">Total Platform Volume <i class="fa-solid fa-dollar-sign" style="color:var(--accent)"></i></div><div class="stat-value" id="statVolumeUsd">$0.00</div></div>
+            <div class="stat-card"><div class="stat-label">Total Settled Volume <i class="fa-solid fa-bolt" style="color:#f59e0b"></i></div><div class="stat-value" id="statVolumeSats">0 sats</div></div>
+        </div>
+
+        <!-- Section 1: Reseller Panels -->
+        <div class="section-header" style="margin-top:0;">
+            <div class="section-title"><i class="fa-solid fa-crown" style="color:var(--gold)"></i> Reseller Panels Control Center</div>
+            <button class="btn btn-primary" onclick="openCreateModal()"><i class="fa-solid fa-plus"></i> Generate & Sell Reseller Panel</button>
+        </div>
+
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th><th>Username</th><th>Email</th><th>Password</th><th>Provider</th><th>Merchants</th><th>Paid Volume</th><th>Status</th><th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="resellerTable">
+                    <tr><td colspan="9" style="text-align:center; padding: 2rem;">Loading resellers...</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Section 2: All Merchant Sub-Users -->
+        <div class="section-header">
+            <div class="section-title"><i class="fa-solid fa-users" style="color:#38bdf8"></i> All Merchant Sub-Users Across Platform</div>
+        </div>
+
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th><th>Merchant Name</th><th>Email</th><th>Reseller Panel Owner</th><th>Password</th><th>Rate</th><th>Created</th><th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="subUserTable">
+                    <tr><td colspan="8" style="text-align:center; padding: 2rem;">Loading merchant sub-users...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </main>
+
+    <!-- Create Reseller Modal -->
+    <div class="modal-overlay" id="createModal">
+        <div class="modal" style="max-width:520px;">
+            <div class="modal-title">
+                <span><i class="fa-solid fa-store" style="color:var(--accent)"></i> Generate & Sell Reseller Panel</span>
+                <span style="cursor:pointer;" onclick="closeCreateModal()">✕</span>
+            </div>
+            <form id="createForm" onsubmit="handleCreateReseller(event)">
+                <div class="form-group">
+                    <label class="form-label">Username</label>
+                    <input type="text" id="newUsername" class="form-input" placeholder="e.g. reseller_john" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Email Address</label>
+                    <input type="email" id="newEmail" class="form-input" placeholder="john@example.com" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Initial Password</label>
+                    <input type="text" id="newPassword" class="form-input" placeholder="Min 8 characters" required minlength="8">
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeCreateModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-bolt"></i> Generate Panel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Master Config Modal -->
+    <div class="modal-overlay" id="configModal">
+        <div class="modal">
+            <div class="modal-title">
+                <span><i class="fa-solid fa-sliders" style="color:var(--gold)"></i> Master Config: <span id="configTitleUsername">Reseller</span></span>
+                <span style="cursor:pointer;" onclick="closeConfigModal()">✕</span>
+            </div>
+
+            <div class="tab-bar">
+                <button type="button" class="tab-btn active" onclick="switchTab(event, 'tabCredentials')"><i class="fa-solid fa-user-gear"></i> Account</button>
+                <button type="button" class="tab-btn" onclick="switchTab(event, 'tabNode')"><i class="fa-solid fa-bolt"></i> Node Gateway</button>
+                <button type="button" class="tab-btn" onclick="switchTab(event, 'tabBinance')"><i class="fa-solid fa-arrows-rotate"></i> Binance Sweep</button>
+                <button type="button" class="tab-btn" onclick="switchTab(event, 'tabPayout')"><i class="fa-solid fa-paper-plane"></i> Payout & Bot</button>
+                <button type="button" class="tab-btn" onclick="switchTab(event, 'tabFees')"><i class="fa-solid fa-receipt"></i> Platform Fees</button>
+            </div>
+
+            <form id="configForm" onsubmit="handleSaveConfig(event)">
+                <input type="hidden" id="configResellerId">
+
+                <div class="tab-content active" id="tabCredentials">
+                    <div class="form-grid">
+                        <div class="form-group"><label class="form-label">Username</label><input type="text" id="cfgUsername" class="form-input"></div>
+                        <div class="form-group"><label class="form-label">Email</label><input type="email" id="cfgEmail" class="form-input"></div>
+                        <div class="form-group"><label class="form-label">Reset Password (Optional)</label><input type="text" id="cfgPassword" class="form-input" placeholder="Leave blank to keep current"></div>
+                        <div class="form-group"><label class="form-label">Status</label><select id="cfgStatus" class="form-input"><option value="active">ACTIVE</option><option value="suspended">SUSPENDED</option></select></div>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="tabNode">
+                    <div class="form-group">
+                        <label class="form-label">Wallet Provider Type</label>
+                        <select id="cfgWalletType" class="form-input">
+                            <option value="blink">⚡ Lightning Node Pool (Blink Pool)</option>
+                            <option value="lnbits">⚡ LNbits Wallet</option>
+                            <option value="opennode">🔶 OpenNode API</option>
+                            <option value="alby">🐝 Alby / NWC</option>
+                            <option value="email">⚡ Lightning Address / LNURL</option>
+                        </select>
+                    </div>
+                    <div class="form-grid">
+                        <div class="form-group"><label class="form-label">Primary Node API Key</label><input type="password" id="cfgBlinkApiKey" class="form-input" placeholder="key_..."></div>
+                        <div class="form-group"><label class="form-label">Node Wallet ID</label><input type="text" id="cfgBlinkWalletId" class="form-input" placeholder="Auto-detected"></div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">⚡ Multi-Key Volume Pool (Bypass Single-Wallet Limit)</label>
+                        <textarea id="cfgBlinkApiKeys" rows="3" class="form-input" placeholder="Paste multiple Node API keys (one per line)"></textarea>
+                    </div>
+                    <div class="form-grid">
+                        <div class="form-group"><label class="form-label">LNbits Server URL</label><input type="url" id="cfgLnbitsUrl" class="form-input" placeholder="https://legend.lnbits.com"></div>
+                        <div class="form-group"><label class="form-label">LNbits Invoice / Read Key</label><input type="password" id="cfgLnbitsInvoiceKey" class="form-input"></div>
+                        <div class="form-group"><label class="form-label">LNbits Admin Key</label><input type="password" id="cfgLnbitsAdminKey" class="form-input"></div>
+                        <div class="form-group"><label class="form-label">Lightning Email / Address</label><input type="email" id="cfgWalletEmail" class="form-input" placeholder="user@coinos.io"></div>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="tabBinance">
+                    <div class="form-grid">
+                        <div class="form-group"><label class="form-label">Binance API Key</label><input type="password" id="cfgBinanceApiKey" class="form-input"></div>
+                        <div class="form-group"><label class="form-label">Binance API Secret</label><input type="password" id="cfgBinanceApiSecret" class="form-input"></div>
+                        <div class="form-group"><label class="form-label">Sweep Threshold ($ USD)</label><input type="number" step="0.1" id="cfgBinanceThresholdUsd" class="form-input" placeholder="10.0"></div>
+                        <div class="form-group"><label class="form-label">Binance Sweep Destination</label><select id="cfgBinanceSweepType" class="form-input"><option value="lightning">Lightning Network Deposit</option><option value="onchain">On-Chain BTC Address Deposit</option></select></div>
+                    </div>
+                    <div class="toggle-group mt-12">
+                        <input type="checkbox" id="cfgBinanceAutoSweepToggle">
+                        <label for="cfgBinanceAutoSweepToggle" style="font-size:0.9rem; font-weight:600;">Enable Binance Auto-Sweep for this Reseller</label>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="tabPayout">
+                    <div class="form-group"><label class="form-label">Instant Lightning Payout Address</label><input type="text" id="cfgAutoPayoutAddress" class="form-input" placeholder="user@blink.sv"></div>
+                    <div class="form-grid">
+                        <div class="form-group"><label class="form-label">Auto-Payout Percentage (%)</label><input type="number" id="cfgAutoPayoutPercent" class="form-input" value="100" min="1" max="100"></div>
+                        <div class="form-group toggle-group" style="margin-top:1.5rem;"><input type="checkbox" id="cfgAutoPayoutToggle"><label for="cfgAutoPayoutToggle" style="font-size:0.85rem; font-weight:600;">Enable Auto Payout</label></div>
+                    </div>
+                    <hr style="border-color:var(--border-color); margin: 1.5rem 0;">
+                    <div class="form-grid">
+                        <div class="form-group"><label class="form-label">Telegram Bot Token</label><input type="password" id="cfgTelegramBotToken" class="form-input" placeholder="bot123456:ABC..."></div>
+                        <div class="form-group"><label class="form-label">Telegram Chat ID</label><input type="text" id="cfgTelegramChatId" class="form-input" placeholder="123456789"></div>
+                    </div>
+                </div>
+
+                <div class="tab-content" id="tabFees">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label class="form-label">Platform Transaction Fee Mode</label>
+                            <select id="cfgChargeMode" class="form-input"><option value="none">NO FEE (0%)</option><option value="fixed">FIXED FEE ($ per payment)</option><option value="percent">PERCENTAGE FEE (% per payment)</option></select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Charge Fee Value</label>
+                            <input type="number" step="0.01" id="cfgChargeValue" class="form-input" placeholder="0.50 or 2.5">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeConfigModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary"><i class="fa-solid fa-floppy-disk"></i> Save Complete Config</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        async function loadOwnerStats() {
+            try {
+                const res = await fetch('/api/owner/stats');
+                if (!res.ok) throw new Error('Failed to load stats');
+                const data = await res.json();
+                document.getElementById('statResellers').innerText = data.resellers;
+                document.getElementById('statSubUsers').innerText = data.sub_users;
+                document.getElementById('statVolumeUsd').innerText = '$' + data.total_volume_usd;
+                document.getElementById('statVolumeSats').innerText = (data.total_volume_sats || 0).toLocaleString() + ' sats';
+            } catch (err) { console.error(err); }
+        }
+
+        async function loadResellers() {
+            try {
+                const res = await fetch('/api/owner/resellers');
+                const list = await res.json();
+                const tbody = document.getElementById('resellerTable');
+                if (!list.length) {
+                    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding: 2rem;">No resellers found. Click "Generate & Sell Reseller Panel" to create one.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = list.map(r => {
+                    return `
+                    <tr>
+                        <td>#${r.id}</td>
+                        <td><strong>${r.username}</strong></td>
+                        <td>${r.email}</td>
+                        <td>
+                            <span class="pwd-cell">
+                                <span id="rPwdVal_${r.id}" data-real="${r.plain_password || ''}">••••••••</span>
+                                <i class="fa-solid fa-eye pwd-toggle" onclick="togglePwdVisibility('rPwdVal_${r.id}')" title="Show/Hide Password"></i>
+                                <i class="fa-solid fa-copy pwd-toggle" onclick="copyText('${r.plain_password || ''}')" title="Copy Password"></i>
+                            </span>
+                        </td>
+                        <td><span class="badge badge-active">${(r.wallet_type || 'NOT SET').toUpperCase()}</span></td>
+                        <td>${r.sub_user_count} merchants</td>
+                        <td style="color:var(--accent); font-weight:700;">$${r.paid_volume_usd}</td>
+                        <td><span class="badge badge-${r.status}">${r.status}</span></td>
+                        <td style="display:flex; gap:0.4rem;">
+                            <button class="btn btn-primary" style="padding: 0.35rem 0.7rem; font-size: 0.8rem;" onclick="openConfigModal(${r.id})">
+                                <i class="fa-solid fa-sliders"></i> ⚙️ Config
+                            </button>
+                            <button class="btn btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.8rem;" onclick="toggleStatus(${r.id}, '${r.status === 'active' ? 'suspended' : 'active'}')">
+                                ${r.status === 'active' ? 'Suspend' : 'Activate'}
+                            </button>
+                        </td>
+                    </tr>
+                `;}).join('');
+            } catch (err) { console.error(err); }
+        }
+
+        async function loadSubUsers() {
+            try {
+                const res = await fetch('/api/owner/sub-users');
+                const list = await res.json();
+                const tbody = document.getElementById('subUserTable');
+                if (!list.length) {
+                    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding: 2rem;">No merchant sub-users created yet.</td></tr>';
+                    return;
+                }
+                tbody.innerHTML = list.map(su => `
+                    <tr>
+                        <td>#${su.id}</td>
+                        <td><strong>${su.name}</strong></td>
+                        <td>${su.email}</td>
+                        <td><span class="badge badge-active"><i class="fa-solid fa-crown"></i> ${su.reseller_username}</span></td>
+                        <td>
+                            <span class="pwd-cell">
+                                <span id="suPwdVal_${su.id}" data-real="${su.plain_password || ''}">••••••••</span>
+                                <i class="fa-solid fa-eye pwd-toggle" onclick="togglePwdVisibility('suPwdVal_${su.id}')" title="Show/Hide Password"></i>
+                                <i class="fa-solid fa-copy pwd-toggle" onclick="copyText('${su.plain_password || ''}')" title="Copy Password"></i>
+                            </span>
+                        </td>
+                        <td>${su.rate_per_dollar || 1.0}x</td>
+                        <td style="color:var(--text-muted); font-size:0.8rem;">${new Date(su.created_at).toLocaleDateString()}</td>
+                        <td>
+                            <button class="btn btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.8rem;" onclick="resetSubUserPassword(${su.id}, '${su.name}')">
+                                <i class="fa-solid fa-key"></i> Reset Password
+                            </button>
+                        </td>
+                    </tr>
+                `).join('');
+            } catch (err) { console.error(err); }
+        }
+
+        function togglePwdVisibility(spanId) {
+            const el = document.getElementById(spanId);
+            const real = el.getAttribute('data-real');
+            if (el.innerText === '••••••••') {
+                el.innerText = real || '(Not Set)';
+            } else {
+                el.innerText = '••••••••';
+            }
+        }
+
+        function copyText(txt) {
+            if (!txt) { alert('No password recorded to copy'); return; }
+            navigator.clipboard.writeText(txt);
+            alert('📋 Password copied to clipboard: ' + txt);
+        }
+
+        async function resetSubUserPassword(suId, suName) {
+            const newPassword = prompt(`Enter new password for merchant "${suName}" (min 8 chars):`);
+            if (!newPassword) return;
+            if (newPassword.length < 8) { alert('Password must be at least 8 characters'); return; }
+
+            try {
+                const res = await fetch(`/api/owner/sub-users/${suId}/reset-password`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ new_password: newPassword })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Reset failed');
+                alert(`✅ Password updated for merchant "${suName}"!`);
+                loadSubUsers();
+            } catch(err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        function switchTab(evt, tabId) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            evt.currentTarget.classList.add('active');
+            document.getElementById(tabId).classList.add('active');
+        }
+
+        async function openConfigModal(resellerId) {
+            try {
+                const res = await fetch(`/api/owner/resellers/${resellerId}`);
+                if (!res.ok) throw new Error('Failed to load reseller config');
+                const r = await res.json();
+
+                document.getElementById('configResellerId').value = r.id;
+                document.getElementById('configTitleUsername').innerText = r.username + ` (#${r.id})`;
+
+                document.getElementById('cfgUsername').value = r.username || '';
+                document.getElementById('cfgEmail').value = r.email || '';
+                document.getElementById('cfgPassword').value = '';
+                document.getElementById('cfgStatus').value = r.status || 'active';
+
+                document.getElementById('cfgWalletType').value = r.wallet_type || 'blink';
+                document.getElementById('cfgBlinkApiKey').value = r.blink_api_key || '';
+                document.getElementById('cfgBlinkApiKeys').value = r.blink_api_keys ? (typeof r.blink_api_keys === 'string' ? r.blink_api_keys : JSON.stringify(r.blink_api_keys)) : '';
+                document.getElementById('cfgBlinkWalletId').value = r.blink_wallet_id || '';
+                document.getElementById('cfgLnbitsUrl').value = r.lnbits_url || '';
+                document.getElementById('cfgLnbitsInvoiceKey').value = r.lnbits_invoice_key || '';
+                document.getElementById('cfgLnbitsAdminKey').value = r.lnbits_admin_key || '';
+                document.getElementById('cfgWalletEmail').value = r.wallet_email || '';
+
+                document.getElementById('cfgBinanceApiKey').value = r.binance_api_key || '';
+                document.getElementById('cfgBinanceApiSecret').value = r.binance_api_secret || '';
+                document.getElementById('cfgBinanceThresholdUsd').value = r.binance_sweep_threshold_usd || 0;
+                document.getElementById('cfgBinanceSweepType').value = r.binance_sweep_type || 'lightning';
+                document.getElementById('cfgBinanceAutoSweepToggle').checked = !!r.binance_auto_sweep_enabled;
+
+                document.getElementById('cfgAutoPayoutAddress').value = r.auto_payout_address || '';
+                document.getElementById('cfgAutoPayoutPercent').value = r.auto_payout_percent || 100;
+                document.getElementById('cfgAutoPayoutToggle').checked = !!r.auto_payout_enabled;
+
+                document.getElementById('cfgTelegramBotToken').value = r.telegram_bot_token || '';
+                document.getElementById('cfgTelegramChatId').value = r.telegram_chat_id || '';
+
+                document.getElementById('cfgChargeMode').value = r.charge_mode || 'none';
+                document.getElementById('cfgChargeValue').value = r.charge_value || 0;
+
+                document.getElementById('configModal').style.display = 'flex';
+            } catch (err) {
+                alert('Error loading reseller details: ' + err.message);
+            }
+        }
+
+        function closeConfigModal() { document.getElementById('configModal').style.display = 'none'; }
+
+        async function handleSaveConfig(e) {
+            e.preventDefault();
+            const id = document.getElementById('configResellerId').value;
+            const body = {
+                username: document.getElementById('cfgUsername').value.trim(),
+                email: document.getElementById('cfgEmail').value.trim(),
+                password: document.getElementById('cfgPassword').value || undefined,
+                status: document.getElementById('cfgStatus').value,
+
+                wallet_type: document.getElementById('cfgWalletType').value,
+                blink_api_key: document.getElementById('cfgBlinkApiKey').value.trim() || null,
+                blink_api_keys: document.getElementById('cfgBlinkApiKeys').value.trim() || null,
+                blink_wallet_id: document.getElementById('cfgBlinkWalletId').value.trim() || null,
+                lnbits_url: document.getElementById('cfgLnbitsUrl').value.trim() || null,
+                lnbits_invoice_key: document.getElementById('cfgLnbitsInvoiceKey').value.trim() || null,
+                lnbits_admin_key: document.getElementById('cfgLnbitsAdminKey').value.trim() || null,
+                wallet_email: document.getElementById('cfgWalletEmail').value.trim() || null,
+
+                binance_api_key: document.getElementById('cfgBinanceApiKey').value.trim() || null,
+                binance_api_secret: document.getElementById('cfgBinanceApiSecret').value.trim() || null,
+                binance_sweep_threshold_usd: parseFloat(document.getElementById('cfgBinanceThresholdUsd').value) || 0,
+                binance_sweep_type: document.getElementById('cfgBinanceSweepType').value,
+                binance_auto_sweep_enabled: document.getElementById('cfgBinanceAutoSweepToggle').checked,
+
+                auto_payout_address: document.getElementById('cfgAutoPayoutAddress').value.trim() || null,
+                auto_payout_percent: parseFloat(document.getElementById('cfgAutoPayoutPercent').value) || 100,
+                auto_payout_enabled: document.getElementById('cfgAutoPayoutToggle').checked,
+
+                telegram_bot_token: document.getElementById('cfgTelegramBotToken').value.trim() || null,
+                telegram_chat_id: document.getElementById('cfgTelegramChatId').value.trim() || null,
+
+                charge_mode: document.getElementById('cfgChargeMode').value,
+                charge_value: parseFloat(document.getElementById('cfgChargeValue').value) || 0
+            };
+
+            try {
+                const res = await fetch(`/api/owner/resellers/${id}/config`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Save failed');
+
+                alert(`✅ Full configuration saved for reseller #${id}!`);
+                closeConfigModal();
+                loadResellers();
+            } catch (err) { alert('Save Error: ' + err.message); }
+        }
+
+        function openCreateModal() { document.getElementById('createModal').style.display = 'flex'; }
+        function closeCreateModal() { document.getElementById('createModal').style.display = 'none'; }
+
+        async function handleCreateReseller(e) {
+            e.preventDefault();
+            const username = document.getElementById('newUsername').value.trim();
+            const email = document.getElementById('newEmail').value.trim();
+            const password = document.getElementById('newPassword').value;
+
+            try {
+                const res = await fetch('/api/owner/resellers', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, email, password })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Creation failed');
+
+                alert(`✅ Panel generated for ${data.reseller.username}!
+
+Login URL: ${window.location.origin}/login
+Username: ${data.reseller.username}
+Password: ${password}`);
+                closeCreateModal();
+                document.getElementById('createForm').reset();
+                loadOwnerStats();
+                loadResellers();
+
+                if (confirm(`Would you like to pre-configure Node API Keys, Binance Sweeps, or Telegram Bots for ${data.reseller.username} right now?`)) {
+                    openConfigModal(data.reseller.id);
+                }
+            } catch (err) { alert('Error: ' + err.message); }
+        }
+
+        async function toggleStatus(id, newStatus) {
+            if (!confirm(`Are you sure you want to set reseller #${id} status to ${newStatus}?`)) return;
+            try {
+                const res = await fetch(`/api/owner/resellers/${id}/status`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ status: newStatus })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Update failed');
+                loadResellers();
+            } catch (err) { alert('Error: ' + err.message); }
+        }
+
+        async function logout() {
+            await fetch('/api/auth/logout', { method: 'POST' });
+            window.location.href = '/login';
+        }
+
+        loadOwnerStats();
+        loadResellers();
+        loadSubUsers();
+    </script>
+</body>
+</html>

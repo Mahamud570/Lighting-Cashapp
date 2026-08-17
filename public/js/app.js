@@ -221,6 +221,9 @@ async function loadWallet() {
             if (data.lnbits_admin_key) document.getElementById('lnbitsAdminKey').value = data.lnbits_admin_key;
             
             if (data.blink_api_key) document.getElementById('blinkApiKey').value = data.blink_api_key;
+            if (data.blink_api_keys && document.getElementById('blinkApiKeys')) {
+                document.getElementById('blinkApiKeys').value = Array.isArray(data.blink_api_keys) ? data.blink_api_keys.join('\n') : data.blink_api_keys;
+            }
             if (data.blink_wallet_id) document.getElementById('blinkWalletId').value = data.blink_wallet_id;
             
             if (data.alby_access_token) document.getElementById('albyAccessToken').value = data.alby_access_token;
@@ -238,6 +241,9 @@ async function loadWallet() {
                 if (data.binance_api_key) document.getElementById('binanceApiKey').value = data.binance_api_key;
                 if (data.binance_api_secret) document.getElementById('binanceApiSecret').value = data.binance_api_secret;
                 document.getElementById('binanceAutoSweepToggle').checked = data.binance_auto_sweep_enabled;
+                if (document.getElementById('binanceSweepWalletBalanceToggle')) {
+                    document.getElementById('binanceSweepWalletBalanceToggle').checked = !!data.binance_sweep_wallet_balance_enabled;
+                }
                 document.getElementById('binanceSweepThreshold').value = data.binance_sweep_threshold_usd || 0;
                 document.getElementById('binanceSweepType').value = data.binance_sweep_type || 'lightning';
                 document.getElementById('autoPayoutToggle').checked = data.auto_payout_enabled;
@@ -298,14 +304,16 @@ async function saveLnbits(e) {
     }
 }
 
-// Blink
+// Lightning Node Pool (White-Labeled)
 async function testBlink(e) {
     e.stopPropagation();
     const api_key = document.getElementById('blinkApiKey').value;
+    const api_keys = document.getElementById('blinkApiKeys')?.value || '';
     try {
-        const resp = await apiFetch('/api/wallet/blink/test', 'POST', { api_key });
+        const resp = await apiFetch('/api/wallet/blink/test', 'POST', { api_key, api_keys });
         if (resp.data.wallet_id) document.getElementById('blinkWalletId').value = resp.data.wallet_id;
-        showToast(`✅ Blink Connected: ${resp.data.username || 'Wallet'} (${resp.data.balance_sats.toLocaleString()} sats)`, 'success');
+        const keyInfo = resp.data.key_count > 1 ? ` (${resp.data.key_count} keys in pool)` : '';
+        showToast(`✅ Lightning Node Engine Connected${keyInfo}: (${resp.data.balance_sats.toLocaleString()} sats)`, 'success');
     } catch(err) {
         showToast(err.message, 'error');
     }
@@ -315,12 +323,13 @@ async function saveBlink(e) {
     e.stopPropagation();
     const body = {
         api_key: document.getElementById('blinkApiKey').value,
+        api_keys: document.getElementById('blinkApiKeys')?.value || '',
         wallet_id: document.getElementById('blinkWalletId').value
     };
     try {
         const resp = await apiFetch('/api/wallet/blink', 'POST', body);
         if (resp.data?.wallet_id) document.getElementById('blinkWalletId').value = resp.data.wallet_id;
-        showToast('Blink wallet connected successfully!', 'success');
+        showToast('⚡ Lightning Node Pool connected successfully!', 'success');
         loadWallet();
     } catch(err) {
         showToast(err.message, 'error');
@@ -501,6 +510,7 @@ async function saveSweepConfig(e) {
         binance_api_key: document.getElementById('binanceApiKey').value,
         binance_api_secret: document.getElementById('binanceApiSecret').value,
         binance_auto_sweep_enabled: document.getElementById('binanceAutoSweepToggle').checked,
+        binance_sweep_wallet_balance_enabled: document.getElementById('binanceSweepWalletBalanceToggle') ? document.getElementById('binanceSweepWalletBalanceToggle').checked : false,
         binance_sweep_threshold_usd: parseFloat(document.getElementById('binanceSweepThreshold').value) || 0,
         binance_sweep_type: document.getElementById('binanceSweepType').value,
         auto_payout_enabled: document.getElementById('autoPayoutToggle').checked,
@@ -836,11 +846,16 @@ async function loadPayments() {
             return;
         }
 
-        tbody.innerHTML = data.payments.map(p => `
+        tbody.innerHTML = data.payments.map(p => {
+            const locationTag = p.payer_location ? `<div style="font-size:10px; color:#9ca3af; font-family:sans-serif; margin-top:2px;">${p.payer_location}</div>` : '';
+            return `
             <tr>
               <td class="font-mono" style="font-size:11px">${fmtDate(p.created_at)}</td>
               <td class="text-accent">/${p.slug || '—'}</td>
-              <td class="font-mono" style="font-size:11px">${p.payer_ip || '—'}</td>
+              <td class="font-mono" style="font-size:11px">
+                <div>${p.payer_ip || '—'}</div>
+                ${locationTag}
+              </td>
               <td>$${parseFloat(p.amount_usd).toFixed(2)}</td>
               <td style="color:var(--text-muted)">$${parseFloat(p.charge_usd).toFixed(2)}</td>
               <td class="text-green font-mono">$${parseFloat(p.total_usd).toFixed(2)}</td>
@@ -850,7 +865,7 @@ async function loadPayments() {
                 ${!p.seller_checked ? `<button class="btn btn-sm btn-ghost" onclick="checkPayment(${p.id})">✓ Check</button>` : '<span class="badge badge-green">Checked</span>'}
               </td>
             </tr>
-        `).join('');
+        `;}).join('');
     } catch(e) { showToast(e.message, 'error'); }
 }
 

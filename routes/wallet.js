@@ -32,6 +32,12 @@ router.get('/api/wallet', auth, async (req, res) => {
             lnbits_admin_key: r.lnbits_admin_key ? '***' + r.lnbits_admin_key.slice(-4) : null,
             // Blink
             blink_api_key: r.blink_api_key ? '***' + r.blink_api_key.slice(-4) : null,
+            blink_api_keys: r.blink_api_keys ? (() => {
+                try {
+                    const keys = JSON.parse(r.blink_api_keys);
+                    return Array.isArray(keys) ? keys.map(k => '***' + k.slice(-4)) : [];
+                } catch (_) { return []; }
+            })() : [],
             blink_wallet_id: r.blink_wallet_id,
             // Alby / NWC
             alby_nwc_string: r.alby_nwc_string ? 'nostr+walletconnect://***' : null,
@@ -40,6 +46,7 @@ router.get('/api/wallet', auth, async (req, res) => {
             binance_api_key: r.binance_api_key ? '***' + r.binance_api_key.slice(-4) : null,
             binance_api_secret: r.binance_api_secret ? '***' + r.binance_api_secret.slice(-4) : null,
             binance_auto_sweep_enabled: !!r.binance_auto_sweep_enabled,
+            binance_sweep_wallet_balance_enabled: !!r.binance_sweep_wallet_balance_enabled,
             binance_sweep_threshold_usd: r.binance_sweep_threshold_usd || 0,
             binance_sweep_type: r.binance_sweep_type || 'lightning',
             // Auto Payout
@@ -109,38 +116,78 @@ router.post('/api/wallet/lnbits/test', auth, async (req, res) => {
     }
 });
 
-// POST /api/wallet/blink - save Blink
+// POST /api/wallet/blink - save single or multi Blink API keys
 router.post('/api/wallet/blink', auth, async (req, res) => {
     try {
-        const { api_key, wallet_id } = req.body;
-        if (!api_key) return res.status(400).json({ error: 'Blink API Key is required' });
+        const { api_key, api_keys, wallet_id } = req.body;
+        
+        let poolKeys = [];
+        if (api_keys) {
+            poolKeys = BlinkService.parseApiKeys(api_key, api_keys);
+        } else if (api_key) {
+            const clean = api_key.startsWith('***') ? req.reseller.blink_api_key : api_key.trim();
+            if (clean) poolKeys.push(clean);
+        }
 
-        const cleanKey = (api_key && !api_key.startsWith('***')) ? api_key.trim() : req.reseller.blink_api_key;
+        if (!poolKeys.length && req.reseller.blink_api_keys) {
+            poolKeys = BlinkService.parseApiKeys(req.reseller.blink_api_key, req.reseller.blink_api_keys);
+        }
 
-        // Test connection and auto-detect wallet ID if not provided
-        const details = await BlinkService.getWalletDetails({ apiKey: cleanKey });
+        if (!poolKeys.length) return res.status(400).json({ error: 'At least one Blink API Key is required' });
+
+        // Test connection with first key in pool
+        const primaryKey = poolKeys[0];
+        const details = await BlinkService.getWalletDetails({ apiKey: primaryKey });
         const finalWalletId = wallet_id ? wallet_id.trim() : details.wallet_id;
 
+        const jsonPool = JSON.stringify(poolKeys);
+
         await db.query(
-            `UPDATE resellers SET wallet_type = "blink", blink_api_key = ?, blink_wallet_id = ? WHERE id = ?`,
-            [cleanKey, finalWalletId, req.reseller.id]
+            `UPDATE resellers SET wallet_type = "blink", blink_api_key = ?, blink_api_keys = ?, blink_wallet_id = ? WHERE id = ?`,
+            [primaryKey, jsonPool, finalWalletId, req.reseller.id]
         );
 
-        res.json({ success: true, message: `Blink Connected (${details.username || details.wallet_id})`, data: details });
+        res.json({
+            success: true,
+            message: `Blink Pool Connected (${poolKeys.length} key${poolKeys.length > 1 ? 's' : ''} in pool — ${details.username || details.wallet_id})`,
+            data: { ...details, key_count: poolKeys.length }
+        });
     } catch (err) {
         res.status(400).json({ error: 'Blink Connection Failed: ' + err.message });
     }
 });
 
-// POST /api/wallet/blink/test
+// POST /api/wallet/blink/test — Test Lightning Node Connection
 router.post('/api/wallet/blink/test', auth, async (req, res) => {
     try {
-        const { api_key } = req.body;
-        const key = (api_key && !api_key.startsWith('***')) ? api_key.trim() : req.reseller.blink_api_key;
-        const details = await BlinkService.getWalletDetails({ apiKey: key });
-        res.json({ success: true, data: details });
+        const { api_key, api_keys } = req.body;
+        
+        // Fetch DB row to get actual unmasked stored keys if masked or empty
+        const [rows] = await db.query('SELECT blink_api_key, blink_api_keys FROM resellers WHERE id = ?', [req.reseller.id]);
+        const dbRow = rows[0] || {};
+
+        let poolKeys = [];
+        if (api_keys) {
+            poolKeys = BlinkService.parseApiKeys(api_key, api_keys);
+        } else if (api_key && !api_key.startsWith('***')) {
+            poolKeys.push(api_key.trim());
+        }
+
+        if (!poolKeys.length && dbRow.blink_api_keys) {
+            poolKeys = BlinkService.parseApiKeys(dbRow.blink_api_key, dbRow.blink_api_keys);
+        } else if (!poolKeys.length && dbRow.blink_api_key) {
+            poolKeys.push(dbRow.blink_api_key);
+        }
+
+        if (!poolKeys.length) {
+            return res.status(400).json({ error: 'Please enter at least one Gateway API Key to test connection' });
+        }
+
+        const primaryKey = poolKeys[0];
+        const details = await BlinkService.getWalletDetails({ apiKey: primaryKey });
+        res.json({ success: true, data: { ...details, key_count: poolKeys.length } });
     } catch (err) {
-        res.status(400).json({ error: 'Blink Test Failed: ' + err.message });
+        res.status(400).json({ error: 'Lightning Engine Connection Failed: ' + err.message });
     }
 });
 

@@ -299,27 +299,32 @@
               </label>
             </div>
 
-            <!-- Blink -->
+            <!-- Lightning Engine / Pool -->
             <div class="radio-card" id="rcBlink" onclick="selectProvider('blink')">
               <label>
                 <input type="radio" name="provider" value="blink" id="radioBlink">
                 <div>
-                  <div class="rc-title">🟡 Blink (Bitcoin Beach) <span class="badge badge-green" style="margin-left:8px">GraphQL API + Instant Payout</span></div>
-                  <div class="rc-sub">Instant zero-fee Lightning payments with auto wallet resolution.</div>
+                  <div class="rc-title">⚡ Lightning Node Pool <span class="badge badge-green" style="margin-left:8px">Zero-Fee + Multi-Key Rotation</span></div>
+                  <div class="rc-sub">High-speed zero-fee Lightning engine with automated volume pool rotation.</div>
                   <div class="rc-body">
                     <div class="form-row mt-12">
                       <div class="form-group">
-                        <label class="form-label">Blink API Key</label>
-                        <input class="form-control" type="password" id="blinkApiKey" placeholder="blink_...">
+                        <label class="form-label">Primary Node API Key</label>
+                        <input class="form-control" type="password" id="blinkApiKey" placeholder="key_...">
                       </div>
                       <div class="form-group">
-                        <label class="form-label">BTC Wallet ID (Optional - Auto Detected)</label>
+                        <label class="form-label">Node Wallet ID (Optional - Auto Detected)</label>
                         <input class="form-control" id="blinkWalletId" placeholder="Auto-detected from API Key">
                       </div>
                     </div>
-                    <div class="flex gap-8">
+                    <div class="form-group mt-8">
+                      <label class="form-label">⚡ Multi-Key Volume Pool (Bypass Single-Wallet Limits)</label>
+                      <textarea class="form-control" id="blinkApiKeys" rows="2" placeholder="Paste multiple Node API keys (one per line or comma separated) to automatically rotate keys and bypass single-wallet limits"></textarea>
+                      <div class="form-hint">The system automatically cycles keys and falls back if any key reaches its limit.</div>
+                    </div>
+                    <div class="flex gap-8 mt-12">
                       <button class="btn btn-ghost btn-sm" onclick="testBlink(event)">Test Connection</button>
-                      <button class="btn btn-primary btn-sm" onclick="saveBlink(event)">Save Blink</button>
+                      <button class="btn btn-primary btn-sm" onclick="saveBlink(event)">Save Lightning Pool</button>
                     </div>
                   </div>
                 </div>
@@ -464,6 +469,13 @@
               <label class="flex-center gap-8 cursor-pointer" style="font-weight:600;">
                 <input type="checkbox" id="binanceAutoSweepToggle" style="width:18px;height:18px;accent-color:#00d632;">
                 <span>Enable Binance Auto-Sweep on incoming payments</span>
+              </label>
+            </div>
+
+            <div class="form-group mb-16">
+              <label class="flex-center gap-8 cursor-pointer" style="font-weight:600;">
+                <input type="checkbox" id="binanceSweepWalletBalanceToggle" style="width:18px;height:18px;accent-color:#00d632;">
+                <span>Auto-sweep accumulated wallet balance to Binance when threshold reached</span>
               </label>
             </div>
 
@@ -807,7 +819,7 @@
             <table>
               <thead>
                 <tr>
-                  <th>Date</th><th>Link</th><th>Payer IP</th><th>Amount</th>
+                  <th>Date</th><th>Link</th><th>Payer IP & Location</th><th>Amount</th>
                   <th>Charge</th><th>Total</th><th>Wallet</th><th>Status</th><th>Action</th>
                 </tr>
               </thead>

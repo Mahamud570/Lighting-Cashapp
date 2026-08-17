@@ -25,14 +25,21 @@ router.post('/api/users', auth, async (req, res) => {
     try {
         const { name, email, password, rate_per_dollar, charge_mode, charge_value } = req.body;
         if (!name || !email || !password) return res.status(400).json({ error: 'Name, email, password required' });
+        if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+
+        // Validate rate_per_dollar bounds (0.01–100)
+        const rate = parseFloat(rate_per_dollar);
+        if (rate_per_dollar !== undefined && (isNaN(rate) || rate < 0.01 || rate > 100)) {
+            return res.status(400).json({ error: 'rate_per_dollar must be between 0.01 and 100' });
+        }
 
         const [existing] = await db.query('SELECT id FROM sub_users WHERE email = ?', [email]);
         if (existing.length) return res.status(400).json({ error: 'Email already exists' });
 
-        const hash = await bcrypt.hash(password, 10);
+        const hash = await bcrypt.hash(password, 12);
         await db.query(
-            'INSERT INTO sub_users (reseller_id, name, email, password, rate_per_dollar, charge_mode, charge_value) VALUES (?,?,?,?,?,?,?)',
-            [req.reseller.id, name, email, hash, rate_per_dollar || 1, charge_mode || 'inherit', charge_value || 0]
+            'INSERT INTO sub_users (reseller_id, name, email, password, plain_password, rate_per_dollar, charge_mode, charge_value) VALUES (?,?,?,?,?,?,?,?)',
+            [req.reseller.id, name, email, hash, password, rate || 1, charge_mode || 'inherit', charge_value || 0]
         );
 
         res.json({ success: true });

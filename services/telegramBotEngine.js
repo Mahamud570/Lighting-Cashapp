@@ -173,6 +173,21 @@ Choose an action below to view your sales stats, check live Blink/Binance balanc
             }
         }
 
+        let sweepInfoText = '';
+        if (reseller.binance_auto_sweep_enabled) {
+            const btcPrice = await PayoutService.getBtcPrice();
+            const thresholdUsd = reseller.binance_sweep_threshold_usd || 0;
+            const thresholdSats = Math.max(10000, Math.round((thresholdUsd / btcPrice) * 100000000));
+            
+            if (reseller.binance_sweep_wallet_balance_enabled) {
+                sweepInfoText = `<i>💡 Accumulated wallet balance auto-sweeps to Binance when it reaches ≥ ${thresholdSats.toLocaleString()} sats ($${thresholdUsd.toFixed(2)}).</i>`;
+            } else {
+                sweepInfoText = `<i>💡 Payments auto-sweep to Binance immediately if ≥ 10,000 sats ($7+). Smaller payments are held.</i>`;
+            }
+        } else {
+            sweepInfoText = `<i>💡 Auto-sweeps to Binance are currently disabled.</i>`;
+        }
+
         const msg = 
 `💰 <b>Complete Balances & Overview</b>
 
@@ -182,7 +197,7 @@ Choose an action below to view your sales stats, check live Blink/Binance balanc
 ⚡ <b>Blink Gateway:</b> ${blinkText}
 🏦 <b>Binance Spot:</b> ${binanceText}
 
-<i>💡 Funds collected in Blink auto-sweep to Binance when balance reaches ≥ 10,000 sats ($7+).</i>`;
+${sweepInfoText}`;
 
         const keyboard = {
             inline_keyboard: [
@@ -245,7 +260,8 @@ ${list.trim()}`;
 📈 <b>Last 7 Days:</b> $${parseFloat(paid7d).toFixed(2)} USD
 🧾 <b>Total Invoices:</b> ${totalCount}
 ⚡ <b>Active Gateway:</b> <code>${(reseller.wallet_type || 'Blink').toUpperCase()}</code>
-🏦 <b>Binance Auto-Sweep:</b> <code>${reseller.binance_auto_sweep_enabled ? 'ENABLED (Threshold: $' + (reseller.binance_sweep_threshold_usd || 0) + ')' : 'DISABLED'}</code>`;
+🏦 <b>Binance Auto-Sweep:</b> <code>${reseller.binance_auto_sweep_enabled ? 'ENABLED (Threshold: $' + (reseller.binance_sweep_threshold_usd || 0) + ')' : 'DISABLED'}</code>
+🔄 <b>Wallet Sweep:</b> <code>${reseller.binance_sweep_wallet_balance_enabled ? 'ENABLED' : 'DISABLED'}</code>`;
 
         const keyboard = {
             inline_keyboard: [

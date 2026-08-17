@@ -23,26 +23,45 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
         const { username, password } = req.body;
         if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
 
+        // 1. Try Resellers / Owners table first
         const [rows] = await db.query(
             "SELECT * FROM resellers WHERE (username = ? OR email = ?) AND status = 'active'",
             [username, username]
         );
 
-        if (!rows.length) return res.status(401).json({ error: 'Invalid credentials' });
-        const reseller = rows[0];
+        let userObj = null;
+        let role = 'reseller';
+        let isSubUser = false;
 
-        const valid = await bcrypt.compare(password, reseller.password);
+        if (rows.length) {
+            userObj = rows[0];
+            role = userObj.role || 'reseller';
+        } else {
+            // 2. Try Sub-users table if not found in resellers
+            const [subRows] = await db.query(
+                "SELECT * FROM sub_users WHERE (email = ? OR name = ?) AND status = 'active'",
+                [username, username]
+            );
+            if (subRows.length) {
+                userObj = subRows[0];
+                role = 'sub_user';
+                isSubUser = true;
+            }
+        }
+
+        if (!userObj) return res.status(401).json({ error: 'Invalid credentials' });
+
+        const valid = await bcrypt.compare(password, userObj.password);
         if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
-        // 2FA Check — if enabled, require TOTP code before issuing JWT
-        if (reseller.totp_enabled && reseller.totp_secret) {
+        // 2FA Check — for reseller/owner accounts if enabled
+        if (!isSubUser && userObj.totp_enabled && userObj.totp_secret) {
             const { totp_code } = req.body;
             if (!totp_code) {
-                // Signal frontend to show 2FA input
                 return res.status(200).json({ requires_2fa: true, message: 'Enter your 2FA code' });
             }
             const totpValid = speakeasy.totp.verify({
-                secret: reseller.totp_secret,
+                secret: userObj.totp_secret,
                 encoding: 'base32',
                 token: totp_code.replace(/\s/g, ''),
                 window: 2
@@ -52,30 +71,35 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
             }
         }
 
-        // Create JWT
-        const token = jwt.sign(
-            { id: reseller.id, username: reseller.username },
-            process.env.JWT_SECRET || 'secret',
-            { expiresIn: '7d' }
-        );
+        // Create JWT with role info
+        const jwtSecret = process.env.JWT_SECRET;
+        if (!jwtSecret) {
+            return res.status(500).json({ error: 'Server configuration error' });
+        }
 
+        const payload = isSubUser
+            ? { id: userObj.id, username: userObj.name, role: 'sub_user', type: 'sub_user', reseller_id: userObj.reseller_id }
+            : { id: userObj.id, username: userObj.username, role: role, type: 'reseller' };
+
+        const token = jwt.sign(payload, jwtSecret, { expiresIn: '7d' });
         const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
         // Detect device
         const ua = req.headers['user-agent'] || '';
         const deviceType = /mobile/i.test(ua) ? 'Mobile' : 'Desktop';
+        const resellerId = isSubUser ? userObj.reseller_id : userObj.id;
 
         // Save session
         await db.query(
             'INSERT INTO sessions (reseller_id, token_hash, ip, user_agent, device_type, expires_at) VALUES (?,?,?,?,?,?)',
-            [reseller.id, tokenHash, req.ip, ua, deviceType, expiresAt]
+            [resellerId, tokenHash, req.clientIp || req.ip, ua, deviceType, expiresAt]
         );
 
         // Log activity
         await db.query(
-            'INSERT INTO activities (reseller_id, actor, event, ip, device) VALUES (?,?,?,?,?)',
-            [reseller.id, reseller.username, 'login', req.ip, ua]
+            'INSERT INTO activities (reseller_id, sub_user_id, actor, event, ip, device) VALUES (?,?,?,?,?,?)',
+            [resellerId, isSubUser ? userObj.id : null, isSubUser ? userObj.name : userObj.username, 'login', req.clientIp || req.ip, ua]
         );
 
         res.cookie('auth_token', token, {
@@ -85,7 +109,8 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
             sameSite: 'lax'
         });
 
-        res.json({ success: true, redirect: '/reseller' });
+        const redirectUrl = role === 'owner' ? '/owner' : (role === 'sub_user' ? '/subuser' : '/reseller');
+        res.json({ success: true, role, redirect: redirectUrl });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Server error' });
@@ -97,7 +122,13 @@ router.post('/api/auth/register', authLimiter, async (req, res) => {
     try {
         const { username, email, password } = req.body;
         if (!username || !email || !password) return res.status(400).json({ error: 'All fields required' });
-        if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+        // S-011 FIX: Raise minimum password length to 8 (NIST SP 800-63B)
+        if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+
+        // Sanitize: username must be alphanumeric/underscore, 3-30 chars
+        if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
+            return res.status(400).json({ error: 'Username must be 3–30 characters (letters, numbers, underscore only)' });
+        }
 
         const [existing] = await db.query('SELECT id FROM resellers WHERE username = ? OR email = ?', [username, email]);
         if (existing.length) return res.status(400).json({ error: 'Username or email already taken' });

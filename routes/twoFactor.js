@@ -17,7 +17,7 @@ const { totpLimiter } = require('../middleware/rateLimiter');
 // GET /api/2fa/setup — Generate secret & return QR code
 router.get('/api/2fa/setup', auth, async (req, res) => {
     try {
-        const [rows] = await db.query('SELECT username, email, totp_enabled FROM resellers WHERE id = ?', [req.user.id]);
+        const [rows] = await db.query('SELECT username, email, totp_enabled FROM resellers WHERE id = ?', [req.reseller.id]);
         if (!rows.length) return res.status(404).json({ error: 'User not found' });
         const reseller = rows[0];
 
@@ -33,7 +33,7 @@ router.get('/api/2fa/setup', auth, async (req, res) => {
         });
 
         // Store temp secret (not enabled yet)
-        await db.query('UPDATE resellers SET totp_secret = ? WHERE id = ?', [secret.base32, req.user.id]);
+        await db.query('UPDATE resellers SET totp_secret = ? WHERE id = ?', [secret.base32, req.reseller.id]);
 
         // Generate QR code as data URL
         const qrDataUrl = await QRCode.toDataURL(secret.otpauth_url);
@@ -56,7 +56,7 @@ router.post('/api/2fa/verify', auth, totpLimiter, async (req, res) => {
         const { code } = req.body;
         if (!code) return res.status(400).json({ error: 'TOTP code required' });
 
-        const [rows] = await db.query('SELECT totp_secret FROM resellers WHERE id = ?', [req.user.id]);
+        const [rows] = await db.query('SELECT totp_secret FROM resellers WHERE id = ?', [req.reseller.id]);
         if (!rows.length || !rows[0].totp_secret) {
             return res.status(400).json({ error: 'No 2FA setup in progress. Start setup first.' });
         }
@@ -72,7 +72,7 @@ router.post('/api/2fa/verify', auth, totpLimiter, async (req, res) => {
             return res.status(401).json({ error: 'Invalid code. Please try again.' });
         }
 
-        await db.query('UPDATE resellers SET totp_enabled = 1 WHERE id = ?', [req.user.id]);
+        await db.query('UPDATE resellers SET totp_enabled = 1 WHERE id = ?', [req.reseller.id]);
         res.json({ success: true, message: '2FA enabled successfully!' });
     } catch (err) {
         console.error('2FA verify error:', err);
@@ -86,7 +86,7 @@ router.post('/api/2fa/disable', auth, totpLimiter, async (req, res) => {
         const { code } = req.body;
         if (!code) return res.status(400).json({ error: 'Current TOTP code required to disable 2FA' });
 
-        const [rows] = await db.query('SELECT totp_secret, totp_enabled FROM resellers WHERE id = ?', [req.user.id]);
+        const [rows] = await db.query('SELECT totp_secret, totp_enabled FROM resellers WHERE id = ?', [req.reseller.id]);
         if (!rows.length || !rows[0].totp_enabled) {
             return res.status(400).json({ error: '2FA is not currently enabled' });
         }
@@ -102,7 +102,7 @@ router.post('/api/2fa/disable', auth, totpLimiter, async (req, res) => {
             return res.status(401).json({ error: 'Invalid code. 2FA not disabled.' });
         }
 
-        await db.query('UPDATE resellers SET totp_enabled = 0, totp_secret = NULL WHERE id = ?', [req.user.id]);
+        await db.query('UPDATE resellers SET totp_enabled = 0, totp_secret = NULL WHERE id = ?', [req.reseller.id]);
         res.json({ success: true, message: '2FA disabled successfully.' });
     } catch (err) {
         console.error('2FA disable error:', err);
@@ -146,7 +146,7 @@ router.post('/api/2fa/validate', totpLimiter, async (req, res) => {
 // GET /api/2fa/status — Check if 2FA is enabled
 router.get('/api/2fa/status', auth, async (req, res) => {
     try {
-        const [rows] = await db.query('SELECT totp_enabled FROM resellers WHERE id = ?', [req.user.id]);
+        const [rows] = await db.query('SELECT totp_enabled FROM resellers WHERE id = ?', [req.reseller.id]);
         res.json({ enabled: rows[0]?.totp_enabled === 1 });
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch 2FA status' });

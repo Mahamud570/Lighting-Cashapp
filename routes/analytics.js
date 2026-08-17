@@ -5,16 +5,23 @@ const auth = require('../middleware/auth');
 
 /**
  * Analytics API Routes
- * GET /api/analytics/overview    — Total revenue, counts, growth
- * GET /api/analytics/chart       — Daily revenue data for chart
- * GET /api/analytics/top-links   — Top payment links by volume
- * GET /api/analytics/recent      — Recent paid transactions
+ *
+ * GET /api/analytics/overview  — Total revenue, counts, growth
+ * GET /api/analytics/chart     — Daily revenue data for chart (period clamped 7–90 days)
+ * GET /api/analytics/top-links — Top payment links by volume
+ * GET /api/analytics/recent    — Recent paid transactions
+ *
+ * FIXES APPLIED:
+ *  - BUG-001: All handlers used `req.user.id` — auth middleware sets `req.reseller`.
+ *             Corrected to `req.reseller.id` throughout.
+ *  - BUG-002: Chart query used string interpolation (`-${days} days`) inside SQL.
+ *             Now uses a safe parameterised binding passed to datetime('now', ?).
  */
 
-// GET /api/analytics/overview
+// ─── GET /api/analytics/overview ─────────────────────────────────────────────
 router.get('/api/analytics/overview', auth, async (req, res) => {
     try {
-        const id = req.user.id;
+        const id = req.reseller.id; // FIX BUG-001: was req.user.id
 
         const [[totals]] = await db.query(`
             SELECT
@@ -46,13 +53,13 @@ router.get('/api/analytics/overview', auth, async (req, res) => {
               AND paid_at >= datetime('now', '-30 days')
         `, [id]);
 
-        // Previous period for growth calculation
+        // Previous 7-day window for week-over-week growth calculation
         const [[prevWeek]] = await db.query(`
             SELECT COALESCE(SUM(total_usd), 0) AS revenue
             FROM payments
             WHERE reseller_id = ? AND status = 'paid'
               AND paid_at >= datetime('now', '-14 days')
-              AND paid_at < datetime('now', '-7 days')
+              AND paid_at <  datetime('now', '-7 days')
         `, [id]);
 
         const [[sweepTotals]] = await db.query(`
@@ -69,17 +76,17 @@ router.get('/api/analytics/overview', auth, async (req, res) => {
             : (week.revenue > 0 ? 100 : 0);
 
         res.json({
-            total_revenue: parseFloat(totals.total_revenue).toFixed(2),
-            total_paid: totals.total_paid,
+            total_revenue:  parseFloat(totals.total_revenue).toFixed(2),
+            total_paid:     totals.total_paid,
             total_invoices: totals.total_invoices,
-            avg_order: parseFloat(totals.avg_order).toFixed(2),
-            today: { revenue: parseFloat(today.revenue).toFixed(2), count: today.count },
-            week: { revenue: parseFloat(week.revenue).toFixed(2), count: week.count, growth: parseFloat(weekGrowth) },
-            month: { revenue: parseFloat(month.revenue).toFixed(2), count: month.count },
+            avg_order:      parseFloat(totals.avg_order).toFixed(2),
+            today:  { revenue: parseFloat(today.revenue).toFixed(2), count: today.count },
+            week:   { revenue: parseFloat(week.revenue).toFixed(2),  count: week.count, growth: parseFloat(weekGrowth) },
+            month:  { revenue: parseFloat(month.revenue).toFixed(2), count: month.count },
             sweeps: {
-                swept: sweepTotals.swept,
-                held: sweepTotals.held,
-                failed: sweepTotals.failed,
+                swept:     sweepTotals.swept,
+                held:      sweepTotals.held,
+                failed:    sweepTotals.failed,
                 swept_usd: parseFloat(sweepTotals.swept_usd).toFixed(2)
             }
         });
@@ -89,32 +96,38 @@ router.get('/api/analytics/overview', auth, async (req, res) => {
     }
 });
 
-// GET /api/analytics/chart?period=7|30|90
+// ─── GET /api/analytics/chart?period=7|30|90 ─────────────────────────────────
 router.get('/api/analytics/chart', auth, async (req, res) => {
     try {
-        const id = req.user.id;
-        const period = parseInt(req.query.period) || 30;
-        const days = Math.min(Math.max(period, 7), 90); // clamp 7-90
+        const id   = req.reseller.id; // FIX BUG-001: was req.user.id
+        const period = parseInt(req.query.period, 10) || 30;
+        const days   = Math.min(Math.max(period, 7), 90); // clamp 7–90
+
+        // FIX BUG-002: was string-interpolated into SQL; now a safe parameterised value.
+        // SQLite datetime('now', ?) accepts modifier strings like '-30 days'.
+        const intervalParam = `-${days} days`;
 
         const [rows] = await db.query(`
             SELECT
-                date(paid_at)                    AS day,
-                COALESCE(SUM(total_usd), 0)      AS revenue,
-                COUNT(*)                          AS count
+                date(paid_at)               AS day,
+                COALESCE(SUM(total_usd), 0) AS revenue,
+                COUNT(*)                    AS count
             FROM payments
             WHERE reseller_id = ? AND status = 'paid'
-              AND paid_at >= datetime('now', '-${days} days')
+              AND paid_at >= datetime('now', ?)
             GROUP BY date(paid_at)
             ORDER BY day ASC
-        `, [id]);
+        `, [id, intervalParam]);
 
-        // Fill missing days with 0
+        // Fill missing days with zeros so the chart always has a complete series
         const dataMap = {};
-        rows.forEach(r => { dataMap[r.day] = { revenue: parseFloat(r.revenue), count: r.count }; });
+        rows.forEach(r => {
+            dataMap[r.day] = { revenue: parseFloat(r.revenue), count: r.count };
+        });
 
-        const labels = [];
+        const labels   = [];
         const revenues = [];
-        const counts = [];
+        const counts   = [];
 
         for (let i = days - 1; i >= 0; i--) {
             const d = new Date();
@@ -122,7 +135,7 @@ router.get('/api/analytics/chart', auth, async (req, res) => {
             const key = d.toISOString().split('T')[0];
             labels.push(key);
             revenues.push(dataMap[key]?.revenue || 0);
-            counts.push(dataMap[key]?.count || 0);
+            counts.push(dataMap[key]?.count   || 0);
         }
 
         res.json({ labels, revenues, counts });
@@ -132,9 +145,10 @@ router.get('/api/analytics/chart', auth, async (req, res) => {
     }
 });
 
-// GET /api/analytics/top-links
+// ─── GET /api/analytics/top-links ────────────────────────────────────────────
 router.get('/api/analytics/top-links', auth, async (req, res) => {
     try {
+        // FIX BUG-001: was req.user.id
         const [rows] = await db.query(`
             SELECT
                 pl.title,
@@ -148,7 +162,7 @@ router.get('/api/analytics/top-links', auth, async (req, res) => {
             GROUP BY pl.id
             ORDER BY total_revenue DESC
             LIMIT 10
-        `, [req.user.id]);
+        `, [req.reseller.id]);
 
         res.json(rows.map(r => ({
             ...r,
@@ -160,9 +174,10 @@ router.get('/api/analytics/top-links', auth, async (req, res) => {
     }
 });
 
-// GET /api/analytics/recent
+// ─── GET /api/analytics/recent ───────────────────────────────────────────────
 router.get('/api/analytics/recent', auth, async (req, res) => {
     try {
+        // FIX BUG-001: was req.user.id
         const [rows] = await db.query(`
             SELECT p.id, p.total_usd, p.status, p.paid_at, p.created_at, p.payer_ip,
                    pl.title AS link_title, pl.slug
@@ -171,7 +186,7 @@ router.get('/api/analytics/recent', auth, async (req, res) => {
             WHERE p.reseller_id = ? AND p.status = 'paid'
             ORDER BY p.paid_at DESC
             LIMIT 10
-        `, [req.user.id]);
+        `, [req.reseller.id]);
 
         res.json(rows);
     } catch (err) {
