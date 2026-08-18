@@ -1,155 +1,169 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🏪 Merchant Panel — Lightning Pay</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <style>
-        :root {
-            --bg-color: #0d1117;
-            --card-bg: rgba(22, 27, 38, 0.75);
-            --border-color: rgba(255, 255, 255, 0.08);
-            --accent: #00d632;
-            --accent-glow: rgba(0, 214, 50, 0.25);
-            --text-main: #f3f4f6;
-            --text-muted: #9ca3af;
-            --danger: #ef4444;
-        }
-
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Inter', sans-serif; }
-        body { background: var(--bg-color); color: var(--text-main); min-height: 100vh; display: flex; flex-direction: column; }
-
-        header {
-            background: rgba(13, 17, 23, 0.9);
-            border-bottom: 1px solid var(--border-color);
-            padding: 1.25rem 2rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            backdrop-filter: blur(12px);
-            position: sticky; top: 0; z-index: 100;
-        }
-
-        .brand { font-size: 1.4rem; font-weight: 800; display: flex; align-items: center; gap: 0.6rem; color: #fff; }
-        .brand-badge { background: rgba(56, 189, 248, 0.2); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.4); font-size: 0.75rem; font-weight: 800; padding: 0.2rem 0.6rem; border-radius: 20px; text-transform: uppercase; }
-
-        .btn { padding: 0.6rem 1.2rem; border-radius: 8px; font-weight: 600; font-size: 0.9rem; cursor: pointer; border: none; transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 0.5rem; }
-        .btn-primary { background: var(--accent); color: #000; box-shadow: 0 0 15px var(--accent-glow); }
-        .btn-secondary { background: rgba(255, 255, 255, 0.05); color: var(--text-main); border: 1px solid var(--border-color); }
-        .btn-danger { background: rgba(239, 68, 68, 0.15); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.3); }
-
-        main { padding: 2rem; max-width: 1300px; margin: 0 auto; width: 100%; flex: 1; }
-
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.25rem; margin-bottom: 2rem; }
-        .stat-card { background: var(--card-bg); border: 1px solid var(--border-color); padding: 1.5rem; border-radius: 14px; backdrop-filter: blur(10px); }
-        .stat-label { font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; }
-        .stat-value { font-size: 1.8rem; font-weight: 800; color: var(--accent); }
-
-        .table-container { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 14px; overflow: hidden; backdrop-filter: blur(10px); margin-bottom: 2rem; }
-        table { width: 100%; border-collapse: collapse; text-align: left; }
-        th { background: rgba(255, 255, 255, 0.03); padding: 1rem 1.25rem; font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted); font-weight: 700; border-bottom: 1px solid var(--border-color); }
-        td { padding: 1rem 1.25rem; border-bottom: 1px solid rgba(255, 255, 255, 0.04); font-size: 0.9rem; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Merchant Panel — Lightning Pay</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0b0e13;--card:#11161f;--border:#242b36;--text:#f3f4f6;--muted:#8d98a8;--green:#00d632;--blue:#38bdf8;--yellow:#f5c451;--red:#ef4444}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif}button,input{font:inherit}.wrap{max-width:1380px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:18px 24px;border-bottom:1px solid var(--border);background:#0d1117;position:sticky;top:0;z-index:10}.brand{font-weight:800;font-size:20px}.badge{font-size:11px;color:var(--blue);border:1px solid #244b60;padding:4px 8px;border-radius:999px;margin-left:8px}.user{color:var(--muted);font-size:14px}.btn{border:1px solid var(--border);background:#171d27;color:var(--text);padding:9px 13px;border-radius:8px;cursor:pointer}.btn:hover{border-color:#3b4655}.btn-primary{background:var(--green);border-color:var(--green);color:#000;font-weight:700}.btn-danger{color:#ff8585}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px}.metric-label{font-size:12px;color:var(--muted);margin-bottom:8px}.metric{font-size:25px;font-weight:800}.green{color:var(--green)}.blue{color:var(--blue)}.yellow{color:var(--yellow)}.muted{color:var(--muted)}.section{margin-top:22px}.section-title{font-size:17px;font-weight:800;margin-bottom:12px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:760px}th,td{text-align:left;padding:12px;border-bottom:1px solid var(--border);font-size:13px}th{font-size:11px;text-transform:uppercase;color:var(--muted)}.link{color:var(--green);text-decoration:none}.pill{display:inline-block;padding:4px 8px;border-radius:999px;font-size:11px;text-transform:uppercase;font-weight:700}.pill-paid{background:#123c20;color:#6ff08c}.pill-pending{background:#3c3312;color:#f5d76b}.pill-expired,.pill-rejected{background:#3a1a1a;color:#ff8b8b}.pill-approved{background:#12334a;color:#75cfff}.qr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}.qr-card{display:flex;gap:16px;align-items:center}.qr-box{width:180px;height:180px;background:#fff;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none}.qr-box canvas,.qr-box img{max-width:170px;max-height:170px}.actions{display:flex;gap:8px;flex-wrap:wrap}.withdraw{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.withdraw input{background:#0b0e13;border:1px solid var(--border);color:var(--text);padding:10px;border-radius:8px;width:180px}.hint{font-size:12px;color:var(--muted);margin-top:7px}.notice{padding:12px;border:1px solid #284055;background:#0e1a24;border-radius:9px;color:#b8d8ed;font-size:13px}.empty{text-align:center;padding:30px;color:var(--muted)}.error{color:#ff8b8b}.two{display:grid;grid-template-columns:1.2fr .8fr;gap:14px}@media(max-width:1000px){.grid{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}}@media(max-width:600px){.wrap{padding:14px}.top{padding:14px}.grid{grid-template-columns:1fr}.qr-card{align-items:flex-start;flex-direction:column}.user{display:none}}
+</style>
 </head>
 <body>
-    <header>
-        <div class="brand">
-            ⚡ Lightning Pay
-            <span class="brand-badge">🏪 Merchant Panel</span>
-        </div>
-        <div>
-            <span id="merchantName" style="font-weight:600; margin-right:1rem;">Loading...</span>
-            <button class="btn btn-danger" onclick="logout()">
-                <i class="fa-solid fa-right-from-bracket"></i> Logout
-            </button>
-        </div>
-    </header>
+<header class="top">
+  <div class="brand">⚡ Lightning Pay <span class="badge">SUB-USER</span></div>
+  <div style="display:flex;align-items:center;gap:12px"><span class="user" id="userName">Loading...</span><button class="btn btn-danger" id="logoutBtn">Logout</button></div>
+</header>
 
-    <main>
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-label">Merchant Balance</div>
-                <div class="stat-value" id="merchantBalance">$0.00</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Exchange Rate / Dollar</div>
-                <div class="stat-value" id="merchantRate">1.00</div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-label">Total Payment Volume</div>
-                <div class="stat-value" id="merchantVolume" style="color:#38bdf8;">$0.00</div>
-            </div>
-        </div>
+<main class="wrap">
+  <div class="notice">Your account is limited to the payment links assigned by your reseller. You can view earnings, analytics, QR codes, and request withdrawals. Wallet/API, Binance, auto-sweep, link creation/deletion, and rate/charge settings are not available here.</div>
 
-        <div class="table-container">
-            <div style="padding: 1.25rem; font-weight:700; font-size:1.1rem; border-bottom:1px solid var(--border-color);">
-                <i class="fa-solid fa-link" style="color:var(--accent)"></i> My Payment Links
-            </div>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Title</th>
-                        <th>Slug / Link URL</th>
-                        <th>Fixed Amount</th>
-                        <th>Created</th>
-                        <th>Action</th>
-                    </tr>
-                </thead>
-                <tbody id="linksTable">
-                    <tr><td colspan="5" style="text-align:center; padding: 2rem;">Loading payment links...</td></tr>
-                </tbody>
-            </table>
-        </div>
-    </main>
+  <section class="section">
+    <div class="grid">
+      <div class="card"><div class="metric-label">Total Received</div><div class="metric green" id="totalReceived">$0.00</div></div>
+      <div class="card"><div class="metric-label">Available Balance</div><div class="metric blue" id="availableBalance">$0.00</div></div>
+      <div class="card"><div class="metric-label">Rate per $1</div><div class="metric yellow" id="rate">1.00</div></div>
+      <div class="card"><div class="metric-label">Estimated Payout</div><div class="metric green" id="estimatedPayout">$0.00</div></div>
+    </div>
+  </section>
 
-    <script>
-        async function loadProfile() {
-            try {
-                const res = await fetch('/api/me');
-                if (!res.ok) throw new Error('Not authenticated');
-                const user = await res.json();
-                document.getElementById('merchantName').innerText = user.username;
-            } catch (err) {
-                window.location.href = '/login';
-            }
-        }
+  <section class="section two">
+    <div class="card">
+      <div class="section-title">Live Traffic & Conversion</div>
+      <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+        <div><div class="metric-label">Clicks</div><strong id="clicks">0</strong></div>
+        <div><div class="metric-label">Invoices</div><strong id="invoices">0</strong></div>
+        <div><div class="metric-label">Conversion</div><strong id="conversion">0%</strong></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="section-title">Request Withdrawal</div>
+      <div class="withdraw"><div><input id="withdrawAmount" type="number" min="0.01" step="0.01" placeholder="Amount ($)"><div class="hint">Base balance before your rate is applied.</div></div><button class="btn btn-primary" id="withdrawBtn">Request withdraw</button></div>
+      <div class="hint" id="withdrawMessage"></div>
+    </div>
+  </section>
 
-        async function loadLinks() {
-            try {
-                const res = await fetch('/api/links');
-                const list = await res.json();
-                const tbody = document.getElementById('linksTable');
-                if (!list.length) {
-                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 2rem;">No payment links found. Contact your panel reseller to issue links.</td></tr>';
-                    return;
-                }
-                tbody.innerHTML = list.map(l => `
-                    <tr>
-                        <td><strong>${l.title}</strong></td>
-                        <td><a href="/pay/${l.slug}" target="_blank" style="color:var(--accent); text-decoration:none;">/pay/${l.slug}</a></td>
-                        <td>${l.fixed_amount ? '$' + l.fixed_amount : 'Open Amount'}</td>
-                        <td>${new Date(l.created_at).toLocaleDateString()}</td>
-                        <td>
-                            <button class="btn btn-secondary" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;" onclick="navigator.clipboard.writeText(window.location.origin + '/pay/${l.slug}'); alert('Link copied!');">
-                                <i class="fa-solid fa-copy"></i> Copy Link
-                            </button>
-                        </td>
-                    </tr>
-                `).join('');
-            } catch (err) {
-                console.error(err);
-            }
-        }
+  <section class="section card">
+    <div class="section-title">My Payment Links</div>
+    <div class="table-wrap"><table><thead><tr><th>Title</th><th>URL</th><th>Amount</th><th>Clicks</th><th>Invoices</th><th>Paid</th><th>Status</th><th>Action</th></tr></thead><tbody id="linksBody"></tbody></table></div>
+  </section>
 
-        async function logout() {
-            await fetch('/api/auth/logout', { method: 'POST' });
-            window.location.href = '/login';
-        }
+  <section class="section">
+    <div class="section-title">My Scan Codes</div>
+    <div class="qr-grid" id="qrGrid"></div>
+  </section>
 
-        loadProfile();
-        loadLinks();
-    </script>
+  <section class="section card">
+    <div class="section-title">Link Performance</div>
+    <div class="table-wrap"><table><thead><tr><th>Link</th><th>Clicks</th><th>Invoices</th><th>Paid Invoices</th><th>Paid Volume</th></tr></thead><tbody id="performanceBody"></tbody></table></div>
+  </section>
+
+  <section class="section card">
+    <div class="section-title">Recent Payments</div>
+    <div class="table-wrap"><table><thead><tr><th>Time</th><th>Link</th><th>Amount</th><th>Status</th></tr></thead><tbody id="paymentsBody"></tbody></table></div>
+  </section>
+
+  <section class="section card">
+    <div class="section-title">Withdrawal Timeline</div>
+    <div class="table-wrap"><table><thead><tr><th>Requested</th><th>Balance Amount</th><th>Rate</th><th>Payout</th><th>Status</th><th>Note</th></tr></thead><tbody id="withdrawalsBody"></tbody></table></div>
+  </section>
+</main>
+
+<script src="/js/qrcode.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const money = n => '$' + Number(n || 0).toFixed(2);
+const esc = value => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+const statusPill = status => `<span class="pill pill-${esc(status)}">${esc(status)}</span>`;
+let assignedLinks = [];
+
+async function api(url, options={}) {
+  const res = await fetch(url, {credentials:'same-origin', ...options, headers:{'Content-Type':'application/json', ...(options.headers||{})}});
+  if (!res.ok) {
+    let msg = 'Request failed';
+    try { msg = (await res.json()).error || msg; } catch (_) {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+function renderLinks(links) {
+  assignedLinks = links || [];
+  const body = $('linksBody');
+  body.textContent = '';
+  if (!assignedLinks.length) { body.innerHTML = '<tr><td colspan="8" class="empty">No payment links have been assigned yet.</td></tr>'; return; }
+  assignedLinks.forEach(l => {
+    const tr = document.createElement('tr');
+    const url = `${location.origin}/pay/${encodeURIComponent(l.slug)}`;
+    const amount = l.amount_type === 'fixed' && l.fixed_amount != null ? money(l.fixed_amount) : 'Open amount';
+    tr.innerHTML = `<td>${esc(l.title)}</td><td><a class="link" target="_blank" rel="noopener" href="${esc(url)}">/pay/${esc(l.slug)}</a></td><td>${esc(amount)}</td><td>${Number(l.clicks||0)}</td><td>${Number(l.invoice_count||0)}</td><td>${money(l.paid_volume)}</td><td>${statusPill(l.status)}</td><td><div class="actions"><button class="btn copy" data-url="${esc(url)}">Copy</button><button class="btn qr" data-url="${esc(url)}">QR</button></div></td>`;
+    body.appendChild(tr);
+  });
+  body.querySelectorAll('.copy').forEach(b => b.addEventListener('click', async () => { await navigator.clipboard.writeText(b.dataset.url); b.textContent='Copied'; setTimeout(()=>b.textContent='Copy',1200); }));
+  body.querySelectorAll('.qr').forEach(b => b.addEventListener('click', () => document.getElementById('qrGrid').scrollIntoView({behavior:'smooth'})));
+}
+
+function renderQR(links) {
+  const grid = $('qrGrid'); grid.textContent='';
+  if (!links.length) { grid.innerHTML='<div class="card empty">No assigned links available for QR codes.</div>'; return; }
+  links.forEach((l, i) => {
+    const url = `${location.origin}/pay/${encodeURIComponent(l.slug)}`;
+    const card=document.createElement('div'); card.className='card qr-card';
+    const box=document.createElement('div'); box.className='qr-box'; box.id=`qr-${i}`;
+    const info=document.createElement('div');
+    info.innerHTML=`<strong>${esc(l.title)}</strong><div class="hint">/pay/${esc(l.slug)}</div><div class="actions" style="margin-top:12px"><button class="btn download-qr">Download QR</button></div>`;
+    card.append(box,info); grid.appendChild(card);
+    try { QRCode.toCanvas(box, url, {width:170, margin:2}, err => { if(err) box.textContent='QR unavailable'; }); } catch (_) { box.textContent='QR unavailable'; }
+    info.querySelector('.download-qr').addEventListener('click', () => {
+      const canvas=box.querySelector('canvas'); if(!canvas) return;
+      const a=document.createElement('a'); a.download=`${l.slug}-qr.png`; a.href=canvas.toDataURL('image/png'); a.click();
+    });
+  });
+}
+
+async function loadOverview() {
+  const d=await api('/api/subuser/overview');
+  $('userName').textContent=d.name || 'Sub-user';
+  $('totalReceived').textContent=money(d.total_received);
+  $('availableBalance').textContent=money(d.available_balance);
+  $('rate').textContent=Number(d.rate_per_dollar||1).toFixed(2);
+  $('estimatedPayout').textContent=money(d.estimated_payout);
+  $('clicks').textContent=Number(d.total_clicks||0);
+  $('invoices').textContent=Number(d.total_invoices||0);
+  $('conversion').textContent=Number(d.conversion_rate||0).toFixed(1)+'%';
+}
+
+async function loadLinks() { const links=await api('/api/subuser/links'); renderLinks(links); renderQR(links); }
+
+async function loadAnalytics() {
+  const d=await api('/api/subuser/analytics');
+  const pb=$('performanceBody'); pb.textContent='';
+  if(!d.links.length) pb.innerHTML='<tr><td colspan="5" class="empty">No link activity yet.</td></tr>';
+  d.links.forEach(l=>{const tr=document.createElement('tr'); tr.innerHTML=`<td>${esc(l.title)} <span class="muted">/${esc(l.slug)}</span></td><td>${Number(l.clicks||0)}</td><td>${Number(l.invoice_count||0)}</td><td>${Number(l.paid_count||0)}</td><td>${money(l.paid_volume)}</td>`;pb.appendChild(tr);});
+  const rb=$('paymentsBody'); rb.textContent='';
+  if(!d.recent_payments.length) rb.innerHTML='<tr><td colspan="4" class="empty">No payments yet.</td></tr>';
+  d.recent_payments.forEach(p=>{const tr=document.createElement('tr');tr.innerHTML=`<td>${esc(new Date(p.created_at).toLocaleString())}</td><td>${esc(p.title||p.slug||'—')}</td><td>${money(p.total_usd)}</td><td>${statusPill(p.status)}</td>`;rb.appendChild(tr);});
+}
+
+async function loadWithdrawals() {
+  const rows=await api('/api/subuser/withdrawals'); const b=$('withdrawalsBody'); b.textContent='';
+  if(!rows.length){b.innerHTML='<tr><td colspan="6" class="empty">No withdrawal requests yet.</td></tr>';return;}
+  rows.forEach(w=>{const tr=document.createElement('tr');tr.innerHTML=`<td>${esc(new Date(w.created_at).toLocaleString())}</td><td>${money(w.amount_usd)}</td><td>${Number(w.rate||1).toFixed(2)}</td><td>${money(w.payout_amount)}</td><td>${statusPill(w.status)}</td><td>${esc(w.note||'—')}</td>`;b.appendChild(tr);});
+}
+
+$('withdrawBtn').addEventListener('click', async()=>{
+  const amount=Number($('withdrawAmount').value); const msg=$('withdrawMessage'); msg.textContent='';
+  if(!Number.isFinite(amount)||amount<=0){msg.textContent='Enter a valid amount.';msg.className='hint error';return;}
+  try{await api('/api/subuser/withdrawals',{method:'POST',body:JSON.stringify({amount_usd:amount})});msg.textContent='Withdrawal request submitted.';msg.className='hint';$('withdrawAmount').value='';await Promise.all([loadOverview(),loadWithdrawals()]);}
+  catch(e){msg.textContent=e.message;msg.className='hint error';}
+});
+
+$('logoutBtn').addEventListener('click', async()=>{try{await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'});}finally{location.href='/login';}});
+
+async function loadAll(){try{await Promise.all([loadOverview(),loadLinks(),loadAnalytics(),loadWithdrawals()]);}catch(e){console.error(e); if(e.message==='Unauthorized'||e.message==='Session expired') location.href='/login';}}
+loadAll();
+setInterval(loadAll,15000);
+</script>
 </body>
 </html>
