@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feature/**", "fix/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Syntax checks
+        run: |
+          node --check server.js
+          node --check routes/auth.js
+          node --check routes/security.js
+          node --check middleware/auth.js
+          node --check database/db.js
+          node --check public/js/reseller-enhancements.js
+      - run: npm test
