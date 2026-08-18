@@ -10,13 +10,9 @@ const axios = require('axios');
 const InvoiceChecker = require('./services/invoiceChecker');
 
 function loadJwtSecret() {
-    if (process.env.JWT_SECRET && process.env.JWT_SECRET.trim()) {
-        return process.env.JWT_SECRET.trim();
-    }
-
+    if (process.env.JWT_SECRET && process.env.JWT_SECRET.trim()) return process.env.JWT_SECRET.trim();
     const dataDir = path.join(__dirname, 'data');
     const secretFile = path.join(dataDir, '.jwt-secret');
-
     try {
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
         if (fs.existsSync(secretFile)) {
@@ -26,7 +22,6 @@ function loadJwtSecret() {
                 return existing;
             }
         }
-
         const generated = crypto.randomBytes(64).toString('hex');
         fs.writeFileSync(secretFile, generated, { encoding: 'utf8', mode: 0o600 });
         console.warn('[security] JWT_SECRET was missing. Generated a persistent local secret at data/.jwt-secret. Configure JWT_SECRET in cPanel to replace it with a managed secret.');
@@ -55,11 +50,7 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use(express.json({
-    verify: (req, res, buf) => {
-        req.rawBody = Buffer.from(buf);
-    }
-}));
+app.use(express.json({ verify: (req, res, buf) => { req.rawBody = Buffer.from(buf); } }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -89,48 +80,43 @@ const { requireRole } = auth;
 
 app.get('/api/me', auth, (req, res) => {
     if (req.role === 'sub_user' && req.sub_user) {
-        return res.json({
-            id: req.sub_user.id,
-            username: req.sub_user.name,
-            email: req.sub_user.email,
-            role: 'sub_user'
-        });
+        return res.json({ id: req.sub_user.id, username: req.sub_user.name, email: req.sub_user.email, role: 'sub_user' });
     }
-
-    res.json({
-        id: req.reseller.id,
-        username: req.reseller.username,
-        email: req.reseller.email,
-        role: req.role || req.reseller.role || 'reseller'
-    });
+    res.json({ id: req.reseller.id, username: req.reseller.username, email: req.reseller.email, role: req.role || req.reseller.role || 'reseller' });
 });
 
-app.get('/owner*', auth, requireRole('owner'), (req, res) => {
-    res.sendFile('owner.html', { root: path.join(__dirname, 'public') });
-});
-
-app.get('/subuser*', auth, requireRole('sub_user'), (req, res) => {
-    res.sendFile('subuser.html', { root: path.join(__dirname, 'public') });
-});
-
-// Reseller-only assets are injected server-side so the existing large dashboard
-// template can stay stable while mobile/session/support improvements remain isolated.
-app.get('/reseller*', auth, requireRole('reseller', 'owner'), (req, res) => {
+function renderPanel(res, filename, assets = []) {
     try {
-        const appHtmlPath = path.join(__dirname, 'public', 'app.html');
-        let html = fs.readFileSync(appHtmlPath, 'utf8');
-        if (!html.includes('/css/reseller-mobile.css')) {
-            html = html.replace('</head>', '  <link rel="stylesheet" href="/css/reseller-mobile.css?v=5">\n</head>');
-        }
-        if (!html.includes('/js/reseller-enhancements.js')) {
-            html = html.replace('</body>', '  <script src="/js/reseller-enhancements.js?v=5"></script>\n</body>');
+        let html = fs.readFileSync(path.join(__dirname, 'public', filename), 'utf8');
+        for (const asset of assets) {
+            if (asset.type === 'css' && !html.includes(asset.href)) {
+                html = html.replace('</head>', `  <link rel="stylesheet" href="${asset.href}">\n</head>`);
+            }
+            if (asset.type === 'js' && !html.includes(asset.src)) {
+                html = html.replace('</body>', `  <script src="${asset.src}"></script>\n</body>`);
+            }
         }
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
         res.send(html);
     } catch (err) {
-        console.error('[reseller] Failed to render dashboard:', err);
-        res.status(500).send('Unable to load reseller dashboard');
+        console.error(`[panel] Failed to render ${filename}:`, err);
+        res.status(500).send('Unable to load dashboard');
     }
+}
+
+app.get('/owner*', auth, requireRole('owner'), (req, res) => {
+    renderPanel(res, 'owner.html', [{ type: 'css', href: '/css/panel-mobile.css?v=5' }]);
+});
+
+app.get('/subuser*', auth, requireRole('sub_user'), (req, res) => {
+    renderPanel(res, 'subuser.html', [{ type: 'css', href: '/css/panel-mobile.css?v=5' }]);
+});
+
+app.get('/reseller*', auth, requireRole('reseller', 'owner'), (req, res) => {
+    renderPanel(res, 'app.html', [
+        { type: 'css', href: '/css/reseller-mobile.css?v=5' },
+        { type: 'js', src: '/js/reseller-enhancements.js?v=5' }
+    ]);
 });
 
 app.get('/force-password-change', auth, (req, res) => {
