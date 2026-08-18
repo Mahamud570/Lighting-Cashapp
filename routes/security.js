@@ -21,7 +21,7 @@ router.get('/api/security/status', auth, requireRole('reseller', 'owner'), async
     try {
         const r = req.reseller;
         const [devices] = await db.query(
-            "SELECT id, ip, device_type, user_agent, last_active, expires_at FROM sessions WHERE reseller_id = ? AND expires_at > datetime('now') ORDER BY last_active DESC",
+            "SELECT id, ip, device_type, user_agent, last_active, created_at, expires_at FROM sessions WHERE account_type = 'reseller' AND account_id = ? AND expires_at > datetime('now') ORDER BY last_active DESC",
             [r.id]
         );
         const [trusted] = await db.query(
@@ -110,9 +110,15 @@ router.post('/api/security/password', auth, async (req, res) => {
 
         const hash = await bcrypt.hash(new_password, 12);
         await db.query(`UPDATE ${targetTable} SET password = ?, must_change_password = 0 WHERE id = ?`, [hash, targetId]);
-        if (req.tokenHash) await db.query('DELETE FROM sessions WHERE reseller_id = ? AND token_hash != ?', [req.reseller.id, req.tokenHash]).catch(() => {});
 
-        // Password changes invalidate saved/trusted browsers for reseller/owner accounts.
+        if (req.tokenHash) {
+            const accountType = isSubUser ? 'sub_user' : 'reseller';
+            await db.query(
+                'DELETE FROM sessions WHERE account_type = ? AND account_id = ? AND token_hash != ?',
+                [accountType, targetId, req.tokenHash]
+            ).catch(() => {});
+        }
+
         if (!isSubUser) {
             await db.query('DELETE FROM trusted_devices WHERE reseller_id = ?', [req.reseller.id]).catch(() => {});
             clearTrustCookie(res);
@@ -135,12 +141,11 @@ router.post('/api/security/password', auth, async (req, res) => {
     }
 });
 
-// Modern session management API.
 router.get('/api/security/sessions', auth, requireRole('reseller', 'owner'), async (req, res) => {
     try {
-        await db.query("DELETE FROM sessions WHERE reseller_id = ? AND expires_at <= datetime('now')", [req.reseller.id]).catch(() => {});
+        await db.query("DELETE FROM sessions WHERE account_type = 'reseller' AND account_id = ? AND expires_at <= datetime('now')", [req.reseller.id]).catch(() => {});
         const [sessions] = await db.query(
-            "SELECT id, ip, user_agent, device_type, last_active, created_at, expires_at FROM sessions WHERE reseller_id = ? AND expires_at > datetime('now') ORDER BY last_active DESC",
+            "SELECT id, ip, user_agent, device_type, last_active, created_at, expires_at FROM sessions WHERE account_type = 'reseller' AND account_id = ? AND expires_at > datetime('now') ORDER BY last_active DESC",
             [req.reseller.id]
         );
         res.json({ sessions, current_session_id: req.sessionId });
@@ -154,7 +159,10 @@ router.delete('/api/security/sessions/:id', auth, requireRole('reseller', 'owner
         const id = parseInt(req.params.id, 10);
         if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid session' });
         if (id === Number(req.sessionId)) return res.status(400).json({ error: 'Use Logout to end the current session' });
-        const [result] = await db.query('DELETE FROM sessions WHERE id = ? AND reseller_id = ?', [id, req.reseller.id]);
+        const [result] = await db.query(
+            "DELETE FROM sessions WHERE id = ? AND account_type = 'reseller' AND account_id = ?",
+            [id, req.reseller.id]
+        );
         if (!result.affectedRows) return res.status(404).json({ error: 'Session not found' });
         res.json({ success: true });
     } catch (err) {
@@ -164,7 +172,10 @@ router.delete('/api/security/sessions/:id', auth, requireRole('reseller', 'owner
 
 router.delete('/api/security/sessions', auth, requireRole('reseller', 'owner'), async (req, res) => {
     try {
-        await db.query('DELETE FROM sessions WHERE reseller_id = ? AND id != ?', [req.reseller.id, req.sessionId]);
+        await db.query(
+            "DELETE FROM sessions WHERE account_type = 'reseller' AND account_id = ? AND id != ?",
+            [req.reseller.id, req.sessionId]
+        );
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: 'Failed to revoke other sessions' });
@@ -190,8 +201,6 @@ router.delete('/api/security/trusted-browsers/:id', auth, requireRole('reseller'
         if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid trusted browser' });
         const [result] = await db.query('DELETE FROM trusted_devices WHERE id = ? AND reseller_id = ?', [id, req.reseller.id]);
         if (!result.affectedRows) return res.status(404).json({ error: 'Trusted browser not found' });
-        // Clearing the local cookie is safe even when revoking a different device.
-        clearTrustCookie(res);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: 'Failed to remove trusted browser' });
@@ -208,11 +217,15 @@ router.delete('/api/security/trusted-browsers', auth, requireRole('reseller', 'o
     }
 });
 
-// Backward-compatible device endpoints used by older UI code.
+// Backward-compatible endpoints retained for older clients. They remain scoped to
+// reseller-owned sessions only and never reveal sub-user sessions.
 router.delete('/api/security/devices/:tokenHash', auth, requireRole('reseller', 'owner'), async (req, res) => {
     try {
         if (req.params.tokenHash === req.tokenHash) return res.status(400).json({ error: 'Cannot remove current device' });
-        await db.query('DELETE FROM sessions WHERE token_hash = ? AND reseller_id = ?', [req.params.tokenHash, req.reseller.id]);
+        await db.query(
+            "DELETE FROM sessions WHERE token_hash = ? AND account_type = 'reseller' AND account_id = ?",
+            [req.params.tokenHash, req.reseller.id]
+        );
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -221,7 +234,10 @@ router.delete('/api/security/devices/:tokenHash', auth, requireRole('reseller', 
 
 router.delete('/api/security/devices', auth, requireRole('reseller', 'owner'), async (req, res) => {
     try {
-        await db.query('DELETE FROM sessions WHERE reseller_id = ? AND token_hash != ?', [req.reseller.id, req.tokenHash]);
+        await db.query(
+            "DELETE FROM sessions WHERE account_type = 'reseller' AND account_id = ? AND token_hash != ?",
+            [req.reseller.id, req.tokenHash]
+        );
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -231,7 +247,7 @@ router.delete('/api/security/devices', auth, requireRole('reseller', 'owner'), a
 router.get('/api/security/devices', auth, requireRole('reseller', 'owner'), async (req, res) => {
     try {
         const [devices] = await db.query(
-            "SELECT *, token_hash as id FROM sessions WHERE reseller_id = ? AND expires_at > datetime('now') ORDER BY last_active DESC",
+            "SELECT *, token_hash as id FROM sessions WHERE account_type = 'reseller' AND account_id = ? AND expires_at > datetime('now') ORDER BY last_active DESC",
             [req.reseller.id]
         );
         res.json({ devices, currentToken: req.tokenHash });
