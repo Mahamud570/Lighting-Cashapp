@@ -6,8 +6,35 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// File upload config — images only (S-005 fix: accept only image MIME types)
+const crypto = require('crypto');
+
+// File upload config — images only with extension and MIME whitelist
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+const ALLOWED_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+
+function validateImageMagicBytes(filePath) {
+    try {
+        if (!fs.existsSync(filePath)) return false;
+        const buffer = Buffer.alloc(12);
+        const fd = fs.openSync(filePath, 'r');
+        fs.readSync(fd, buffer, 0, 12, 0);
+        fs.closeSync(fd);
+
+        // PNG: 89 50 4E 47
+        if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return true;
+        // JPEG: FF D8 FF
+        if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return true;
+        // GIF: 47 49 46 38
+        if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) return true;
+        // WEBP: RIFF....WEBP
+        if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+            buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) return true;
+
+        return false;
+    } catch (_) {
+        return false;
+    }
+}
 
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
@@ -17,15 +44,20 @@ const storage = multer.diskStorage({
     },
     filename: (req, file, cb) => {
         const ext = path.extname(file.originalname).toLowerCase();
-        cb(null, `logo_${req.reseller.id}_${Date.now()}${ext}`);
+        if (!ALLOWED_EXTENSIONS.has(ext)) {
+            return cb(new Error('Invalid image file extension'));
+        }
+        const randomName = crypto.randomBytes(16).toString('hex');
+        cb(null, `logo_${randomName}${ext}`);
     }
 });
 
 const upload = multer({
     storage,
-    limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB
+    limits: { fileSize: 2 * 1024 * 1024 }, // 2 MB max
     fileFilter: (req, file, cb) => {
-        if (ALLOWED_IMAGE_TYPES.has(file.mimetype)) {
+        const ext = path.extname(file.originalname).toLowerCase();
+        if (ALLOWED_IMAGE_TYPES.has(file.mimetype) && ALLOWED_EXTENSIONS.has(ext)) {
             cb(null, true);
         } else {
             cb(new Error('Only image files are allowed (jpg, png, gif, webp)'), false);
@@ -44,34 +76,34 @@ const RESERVED_SLUGS = new Set([
 router.get('/api/links', auth, async (req, res) => {
     try {
         const isSubUser = req.role === 'sub_user';
-        let where = 'pl.reseller_id = ?';
+        let query = `
+            SELECT pl.*, su.name as sub_user_name,
+                   (SELECT COUNT(*) FROM payments p WHERE p.link_id = pl.id AND p.status = 'paid') as payment_count,
+                   COALESCE((SELECT SUM(total_usd) FROM payments p WHERE p.link_id = pl.id AND p.status = 'paid'), 0) as total_volume_usd
+            FROM payment_links pl
+            LEFT JOIN sub_users su ON pl.sub_user_id = su.id
+            WHERE pl.reseller_id = ?
+        `;
         const params = [req.reseller.id];
+
         if (isSubUser) {
-            where += ' AND pl.sub_user_id = ?';
+            query += ' AND pl.sub_user_id = ?';
             params.push(req.sub_user.id);
         }
 
-        const [links] = await db.query(
-            `SELECT pl.*, 
-             (SELECT COUNT(*) FROM payments p WHERE p.link_id = pl.id) as invoice_count,
-             COALESCE(su.name, 'Reseller') as owner_name
-             FROM payment_links pl
-             LEFT JOIN sub_users su ON pl.sub_user_id = su.id
-             WHERE ${where}
-             ORDER BY pl.created_at DESC`,
-            params
-        );
+        query += ' ORDER BY pl.created_at DESC';
+
+        const [links] = await db.query(query, params);
         res.json(links);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// POST /api/links - create payment link
+// POST /api/links - create a payment link
 router.post('/api/links', auth, upload.single('logo'), async (req, res) => {
     try {
         const { slug, title, brand_name, domain, theme, amount_type, fixed_amount, min_amount, max_amount, sub_user_id } = req.body;
-
         if (!slug || !title) return res.status(400).json({ error: 'Slug and title are required' });
 
         const cleanSlug = slug.toLowerCase().replace(/[^a-z0-9-_]/g, '');
@@ -84,6 +116,15 @@ router.post('/api/links', auth, upload.single('logo'), async (req, res) => {
         // Check slug uniqueness
         const [existing] = await db.query('SELECT id FROM payment_links WHERE slug = ?', [cleanSlug]);
         if (existing.length) return res.status(400).json({ error: 'This payment link URL is already taken' });
+
+        // Validate image magic bytes if a logo was uploaded
+        if (req.file) {
+            const valid = validateImageMagicBytes(req.file.path);
+            if (!valid) {
+                try { fs.unlinkSync(req.file.path); } catch (_) {}
+                return res.status(400).json({ error: 'Uploaded file is not a valid image.' });
+            }
+        }
 
         const logoPath = req.file ? `/uploads/logos/${req.file.filename}` : null;
         const isSubUser = req.role === 'sub_user';

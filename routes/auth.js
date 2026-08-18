@@ -76,7 +76,10 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
         }
 
         // Create JWT with role info
-        const jwtSecret = process.env.JWT_SECRET || 'lightning_pay_production_jwt_secret_key_2026_x99';
+        const jwtSecret = process.env.JWT_SECRET;
+        if (!jwtSecret) {
+            throw new Error('JWT_SECRET environment variable is missing');
+        }
 
         const payload = isSubUser
             ? { id: userObj.id, username: userObj.name, role: 'sub_user', type: 'sub_user', reseller_id: userObj.reseller_id }

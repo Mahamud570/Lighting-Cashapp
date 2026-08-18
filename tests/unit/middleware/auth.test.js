@@ -72,15 +72,14 @@ test('S-002 regression: tampered JWT throws -> 401', async () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Invalid token' });
 });
 
-test('missing JWT_SECRET env var uses secure default fallback without crashing', async () => {
+test('missing JWT_SECRET env var rejects auth with 401', async () => {
     delete process.env.JWT_SECRET;
-    jwt.verify.mockReturnValue({ id: 1 });
-    db.query.mockResolvedValueOnce([[{ id: 1 }]]); // session found
-    db.query.mockResolvedValueOnce([{}]); // touch session
-    db.query.mockResolvedValueOnce([[{ id: 1, username: 'admin', role: 'owner', must_change_password: 0 }]]); // reseller found
     const { req, res, next } = buildMock();
     await authMiddleware(req, res, next);
-    expect(next).toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith({ error: 'Invalid token' });
+    process.env.JWT_SECRET = 'test_secret_value';
 });
 
 test('expired session in DB: 401 and cookie cleared', async () => {

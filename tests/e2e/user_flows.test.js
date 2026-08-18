@@ -1,3 +1,5 @@
+process.env.JWT_SECRET = 'test_e2e_jwt_secret_key_12345';
+
 const request = require('supertest');
 const express = require('express');
 const cookieParser = require('cookie-parser');

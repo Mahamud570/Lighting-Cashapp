@@ -53,7 +53,10 @@ const authMiddleware = async (req, res, next) => {
             return res.redirect('/login');
         }
 
-        const jwtSecret = process.env.JWT_SECRET || 'lightning_pay_production_jwt_secret_key_2026_x99';
+        const jwtSecret = process.env.JWT_SECRET;
+        if (!jwtSecret) {
+            throw new Error('JWT_SECRET environment variable is missing');
+        }
 
         const decoded = jwt.verify(token, jwtSecret);
         const tokenHash = crypto.createHash('sha256').update(token).digest('hex');

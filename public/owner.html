@@ -278,6 +278,16 @@
     </div>
 
     <script>
+        function escHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         async function loadOwnerStats() {
             try {
                 const res = await fetch('/api/owner/stats');
@@ -303,16 +313,16 @@
                     return `
                     <tr>
                         <td>#${r.id}</td>
-                        <td><strong>${r.username}</strong></td>
-                        <td>${r.email}</td>
+                        <td><strong>${escHtml(r.username)}</strong></td>
+                        <td>${escHtml(r.email)}</td>
                         <td>
-                            <button class="btn btn-secondary" style="padding:0.25rem 0.6rem;font-size:0.8rem;" onclick="resetResellerPassword(${r.id}, '${r.username}')">
+                            <button class="btn btn-secondary" style="padding:0.25rem 0.6rem;font-size:0.8rem;" onclick="resetResellerPassword(${r.id}, '${escHtml(r.username)}')">
                                 <i class="fa-solid fa-key"></i> Reset Password
                             </button>
                         </td>
-                        <td><span class="badge badge-active">${(r.wallet_type || 'NOT SET').toUpperCase()}</span></td>
+                        <td><span class="badge badge-active">${escHtml((r.wallet_type || 'NOT SET').toUpperCase())}</span></td>
                         <td>${r.sub_user_count} merchants</td>
-                        <td style="color:var(--accent); font-weight:700;">$${r.paid_volume_usd}</td>
+                        <td style="color:var(--accent); font-weight:700;">$${parseFloat(r.paid_volume_usd || 0).toFixed(2)}</td>
                         <td><span class="badge badge-${r.status}">${r.status}</span></td>
                         <td style="display:flex; gap:0.4rem;">
                             <button class="btn btn-primary" style="padding: 0.35rem 0.7rem; font-size: 0.8rem;" onclick="openConfigModal(${r.id})">
@@ -339,18 +349,18 @@
                 tbody.innerHTML = list.map(su => `
                     <tr>
                         <td>#${su.id}</td>
-                        <td><strong>${su.name}</strong></td>
-                        <td>${su.email}</td>
-                        <td><span class="badge badge-active"><i class="fa-solid fa-crown"></i> ${su.reseller_username}</span></td>
+                        <td><strong>${escHtml(su.name)}</strong></td>
+                        <td>${escHtml(su.email)}</td>
+                        <td><span class="badge badge-active"><i class="fa-solid fa-crown"></i> ${escHtml(su.reseller_username)}</span></td>
                         <td>
-                            <button class="btn btn-secondary" style="padding:0.25rem 0.6rem;font-size:0.8rem;" onclick="resetSubUserPassword(${su.id}, '${su.name}')">
+                            <button class="btn btn-secondary" style="padding:0.25rem 0.6rem;font-size:0.8rem;" onclick="resetSubUserPassword(${su.id}, '${escHtml(su.name)}')">
                                 <i class="fa-solid fa-key"></i> Reset Password
                             </button>
                         </td>
                         <td>${su.rate_per_dollar || 1.0}x</td>
                         <td style="color:var(--text-muted); font-size:0.8rem;">${new Date(su.created_at).toLocaleDateString()}</td>
                         <td>
-                            <button class="btn btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.8rem;" onclick="resetSubUserPassword(${su.id}, '${su.name}')">
+                            <button class="btn btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.8rem;" onclick="resetSubUserPassword(${su.id}, '${escHtml(su.name)}')">
                                 <i class="fa-solid fa-key"></i> Reset Password
                             </button>
                         </td>

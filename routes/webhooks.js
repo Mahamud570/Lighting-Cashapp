@@ -67,14 +67,17 @@ router.post('/api/webhooks/lnbits', async (req, res) => {
             [bolt11 || paymentHash, paymentHash || bolt11]
         );
 
-        if (payment) {
-            // Verify with LNbits node directly before trusting webhook payload
-            const check = await InvoiceChecker.check(payment);
-            if (check.paid) {
-                await handlePaymentSuccess(payment, req.app.get('io'), 'lnbits', body);
-            }
+        if (!payment) {
+            return res.status(404).json({ error: 'Pending payment not found' });
         }
 
+        // Verify with LNbits node directly before trusting webhook payload
+        const check = await InvoiceChecker.check(payment);
+        if (!check.paid) {
+            return res.status(400).json({ error: 'Payment not settled on LNbits node' });
+        }
+
+        await handlePaymentSuccess(payment, req.app.get('io'), 'lnbits', body);
         res.json({ success: true, message: 'LNbits webhook processed' });
     } catch (err) {
         console.error('LNbits webhook error:', err);
@@ -94,14 +97,17 @@ router.post('/api/webhooks/blink', async (req, res) => {
             [paymentRequest || paymentHash, paymentHash || paymentRequest]
         );
 
-        if (payment) {
-            // Verify with Blink node directly before marking paid
-            const check = await InvoiceChecker.check(payment);
-            if (check.paid) {
-                await handlePaymentSuccess(payment, req.app.get('io'), 'blink', body);
-            }
+        if (!payment) {
+            return res.status(404).json({ error: 'Pending payment not found' });
         }
 
+        // Verify with Blink node directly before marking paid
+        const check = await InvoiceChecker.check(payment);
+        if (!check.paid) {
+            return res.status(400).json({ error: 'Payment not settled on Blink node' });
+        }
+
+        await handlePaymentSuccess(payment, req.app.get('io'), 'blink', body);
         res.json({ success: true, message: 'Blink webhook processed' });
     } catch (err) {
         console.error('Blink webhook error:', err);
@@ -120,13 +126,17 @@ router.post('/api/webhooks/alby', async (req, res) => {
             [paymentHash, `%${paymentHash}%`]
         );
 
-        if (payment) {
-            const check = await InvoiceChecker.check(payment);
-            if (check.paid || body.settled === true) {
-                await handlePaymentSuccess(payment, req.app.get('io'), 'alby', body);
-            }
+        if (!payment) {
+            return res.status(404).json({ error: 'Pending payment not found' });
         }
 
+        // Check node state directly — never trust body.settled
+        const check = await InvoiceChecker.check(payment);
+        if (!check.paid) {
+            return res.status(400).json({ error: 'Payment not verified on node' });
+        }
+
+        await handlePaymentSuccess(payment, req.app.get('io'), 'alby', body);
         res.json({ success: true, message: 'Alby webhook processed' });
     } catch (err) {
         console.error('Alby webhook error:', err);
@@ -141,22 +151,27 @@ router.post('/api/webhooks/opennode', async (req, res) => {
         if (!body.id) return res.status(400).json({ error: 'Missing OpenNode charge ID' });
 
         const payment = await findPendingPayment('p.invoice_id = ?', [body.id]);
-        if (payment) {
-            // Verify HMAC signature if opennode_api_key exists
-            const receivedHash = req.headers['hashed_order'];
-            if (payment.opennode_api_key && receivedHash) {
-                const expectedHash = crypto.createHmac('sha256', payment.opennode_api_key).update(body.id).digest('hex');
-                if (receivedHash !== expectedHash) {
-                    return res.status(401).json({ error: 'Invalid OpenNode HMAC signature' });
-                }
-            }
-
-            const check = await InvoiceChecker.check(payment);
-            if (check.paid || body.status === 'paid') {
-                await handlePaymentSuccess(payment, req.app.get('io'), 'opennode', body);
-            }
+        if (!payment) {
+            return res.status(404).json({ error: 'Pending payment not found' });
         }
 
+        // Require and verify OpenNode HMAC signature
+        const receivedHash = req.headers['hashed_order'];
+        if (!receivedHash || !payment.opennode_api_key) {
+            return res.status(401).json({ error: 'Missing OpenNode webhook authentication credentials' });
+        }
+
+        const expectedHash = crypto.createHmac('sha256', payment.opennode_api_key).update(body.id).digest('hex');
+        if (receivedHash !== expectedHash) {
+            return res.status(401).json({ error: 'Invalid OpenNode HMAC signature' });
+        }
+
+        const check = await InvoiceChecker.check(payment);
+        if (!check.paid && body.status !== 'paid') {
+            return res.status(400).json({ error: 'Payment not confirmed on OpenNode' });
+        }
+
+        await handlePaymentSuccess(payment, req.app.get('io'), 'opennode', body);
         res.json({ success: true });
     } catch (err) {
         console.error('OpenNode webhook error:', err);
@@ -172,22 +187,28 @@ router.post('/api/webhooks/btcpay', async (req, res) => {
         if (!invoiceId) return res.status(400).json({ error: 'Missing BTCPay invoice ID' });
 
         const payment = await findPendingPayment('p.invoice_id = ?', [invoiceId]);
-        if (payment) {
-            // Verify BTCPay signature header if btcpay_webhook_secret is configured
-            const btcpaySig = req.headers['btcpay-sig'];
-            if (payment.btcpay_webhook_secret && btcpaySig) {
-                const rawBody = JSON.stringify(req.body);
-                const expectedSig = 'sha256=' + crypto.createHmac('sha256', payment.btcpay_webhook_secret).update(rawBody).digest('hex');
-                if (btcpaySig !== expectedSig) {
-                    return res.status(401).json({ error: 'Invalid BTCPay webhook signature' });
-                }
-            }
+        if (!payment) {
+            return res.status(404).json({ error: 'Pending payment not found' });
+        }
 
-            if (body.type === 'InvoiceSettled' || body.type === 'InvoicePaymentSettled' || body.status === 'Settled') {
-                await handlePaymentSuccess(payment, req.app.get('io'), 'btcpay', body);
+        // Verify BTCPay signature header if btcpay_webhook_secret is configured
+        if (payment.btcpay_webhook_secret) {
+            const btcpaySig = req.headers['btcpay-sig'];
+            if (!btcpaySig) {
+                return res.status(401).json({ error: 'Missing BTCPay signature header' });
+            }
+            const rawBody = JSON.stringify(req.body);
+            const expectedSig = 'sha256=' + crypto.createHmac('sha256', payment.btcpay_webhook_secret).update(rawBody).digest('hex');
+            if (btcpaySig !== expectedSig) {
+                return res.status(401).json({ error: 'Invalid BTCPay webhook signature' });
             }
         }
 
+        if (body.type !== 'InvoiceSettled' && body.type !== 'InvoicePaymentSettled' && body.status !== 'Settled') {
+            return res.status(400).json({ error: 'Invoice not settled' });
+        }
+
+        await handlePaymentSuccess(payment, req.app.get('io'), 'btcpay', body);
         res.json({ success: true });
     } catch (err) {
         console.error('BTCPay webhook error:', err);

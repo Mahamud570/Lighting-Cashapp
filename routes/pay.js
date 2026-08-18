@@ -266,14 +266,27 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
         // Sanitize payer note: max 500 chars, strip control characters
         const payerNote = note ? String(note).replace(/[\x00-\x1F\x7F]/g, '').substring(0, 500) : null;
 
-        // Calculate charge
+        // Calculate and validate charge
         let chargeUsd = 0;
-        if (link.charge_mode === 'fixed') chargeUsd = parseFloat(link.charge_value);
-        if (link.charge_mode === 'percent') chargeUsd = (amountUsd * parseFloat(link.charge_value)) / 100;
-        const totalUsd = amountUsd + chargeUsd;
+        if (link.charge_mode === 'fixed') {
+            const parsedVal = parseFloat(link.charge_value);
+            if (!isNaN(parsedVal) && isFinite(parsedVal) && parsedVal > 0) {
+                chargeUsd = Math.min(parsedVal, 100); // capped at $100 max fee
+            }
+        } else if (link.charge_mode === 'percent') {
+            const parsedVal = parseFloat(link.charge_value);
+            if (!isNaN(parsedVal) && isFinite(parsedVal) && parsedVal > 0) {
+                const percent = Math.min(parsedVal, 50); // capped at 50% max fee
+                chargeUsd = (amountUsd * percent) / 100;
+            }
+        }
+        const totalUsd = parseFloat((amountUsd + chargeUsd).toFixed(2));
+        if (isNaN(totalUsd) || !isFinite(totalUsd) || totalUsd <= 0) {
+            return res.status(400).json({ error: 'Invalid total payment amount' });
+        }
 
         const btcPrice = await PayoutService.getBtcPrice();
-        const totalSats = Math.round((totalUsd / btcPrice) * 100000000);
+        const totalSats = Math.max(1, Math.round((totalUsd / btcPrice) * 100000000));
 
         let invoiceData = {};
 
@@ -327,7 +340,10 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
                 };
             } else {
                 const parsedNwc = AlbyService.parseNwcUri(link.alby_nwc_string);
-                const targetAddress = parsedNwc?.lud16 || link.wallet_email || 'imposter@coinos.io';
+                const targetAddress = parsedNwc?.lud16 || link.wallet_email;
+                if (!targetAddress) {
+                    return res.status(400).json({ error: 'No Lightning address associated with this NWC connection. Please configure a Lightning Address in Wallet Settings.' });
+                }
                 const payreq = await PayoutService.resolveLightningAddress(targetAddress, totalSats);
                 invoiceData = {
                     invoice_id: `nwc_${Date.now()}`,
@@ -373,7 +389,10 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
             };
         } else {
             // Default / Email / Lightning Address (e.g. user@blink.sv or user@walletofsatoshi.com)
-            const lightningAddress = link.wallet_email || 'imposter@coinos.io';
+            const lightningAddress = link.wallet_email;
+            if (!lightningAddress) {
+                return res.status(400).json({ error: 'No Lightning receiving address configured for this link. Please configure your wallet settings.' });
+            }
             try {
                 const payreq = await PayoutService.resolveLightningAddress(lightningAddress, totalSats);
                 invoiceData = {
@@ -384,12 +403,8 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
                     btc_amount: totalSats / 100000000
                 };
             } catch(lnErr) {
-                console.error('LNURL resolution error, falling back to manual:', lnErr.message);
-                invoiceData = {
-                    invoice_id: `manual_${Date.now()}`,
-                    lightning_invoice: null,
-                    provider: 'email'
-                };
+                console.error('LNURL resolution error, failing safely:', lnErr.message);
+                return res.status(400).json({ error: 'Failed to resolve Lightning Address for this payment. Please verify your wallet configuration.' });
             }
         }
 
@@ -472,16 +487,27 @@ router.get('/api/pay/invoice/:id/status', async (req, res) => {
             const { paid } = await InvoiceChecker.check(payment);
 
             if (paid) {
-                await db.query(
-                    "UPDATE payments SET status = 'paid', paid_at = datetime('now') WHERE id = ?",
+                const [updateResult] = await db.query(
+                    "UPDATE payments SET status = 'paid', paid_at = datetime('now') WHERE id = ? AND status = 'pending'",
                     [payment.id]
                 );
-                payment.status = 'paid';
 
-                // Trigger auto-settlement pipeline (fire-and-forget)
-                PayoutService.processAutoSettlement(payment.id, req.app.get('io')).catch(err => {
-                    console.error('[pay] Auto settlement error in status poll:', err);
-                });
+                if (updateResult && updateResult.affectedRows === 1) {
+                    payment.status = 'paid';
+                    payment.paid_at = new Date().toISOString();
+
+                    if (req.app.get('io')) {
+                        req.app.get('io').to(`reseller:${payment.reseller_id}`).emit('payment:update', { id: payment.id, status: 'paid' });
+                        req.app.get('io').to(`payment:${payment.id}`).emit('status', { status: 'paid' });
+                    }
+
+                    // Trigger auto-settlement pipeline exactly once
+                    PayoutService.processAutoSettlement(payment.id, req.app.get('io')).catch(err => {
+                        console.error('[pay] Auto settlement error in status poll:', err);
+                    });
+                } else {
+                    payment.status = 'paid';
+                }
             }
         }
 

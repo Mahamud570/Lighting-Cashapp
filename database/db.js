@@ -85,8 +85,6 @@ async function initDb() {
         "ALTER TABLE resellers ADD COLUMN binance_sweep_wallet_balance_enabled INTEGER DEFAULT 0",
         "ALTER TABLE resellers ADD COLUMN must_change_password INTEGER DEFAULT 0",
         "ALTER TABLE sub_users ADD COLUMN must_change_password INTEGER DEFAULT 0",
-        "ALTER TABLE resellers ADD COLUMN plain_password TEXT",
-        "ALTER TABLE sub_users ADD COLUMN plain_password TEXT",
         "ALTER TABLE payments ADD COLUMN payer_location TEXT",
         "ALTER TABLE payments ADD COLUMN verify_url TEXT"
     ];

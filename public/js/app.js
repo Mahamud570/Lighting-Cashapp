@@ -1,5 +1,12 @@
-// ─── LIGHTNING PAY - DASHBOARD JS ─────────────────────────────
-// Modern SPA with real-time updates via Socket.io
+function escHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
 const API = '';
 let currentPage = 'dashboard';
@@ -163,7 +170,7 @@ async function loadDashboard() {
         if (data.top_links.length) {
             topLinksBody.innerHTML = data.top_links.map(l => `
                 <tr>
-                  <td><a href="/pay/${l.slug}" target="_blank" class="text-accent">${l.slug}</a></td>
+                  <td><a href="/pay/${encodeURIComponent(l.slug)}" target="_blank" class="text-accent">${escHtml(l.slug)}</a></td>
                   <td>${l.fixed_amount ? '$' + l.fixed_amount : 'Open'}</td>
                   <td>${l.clicks}</td>
                   <td>${l.invoices}</td>
@@ -178,7 +185,7 @@ async function loadDashboard() {
             recentPayBody.innerHTML = data.recent_payments.map(p => `
                 <tr>
                   <td class="font-mono" style="font-size:11px">${fmtDate(p.created_at)}</td>
-                  <td>${p.slug || '—'}</td>
+                  <td>${escHtml(p.slug) || '—'}</td>
                   <td class="text-green">$${parseFloat(p.total_usd).toFixed(2)}</td>
                   <td>${statusBadge(p.status)}</td>
                 </tr>
@@ -191,9 +198,9 @@ async function loadDashboard() {
             clicksBody.innerHTML = data.recent_clicks.map(c => `
                 <tr>
                   <td class="font-mono" style="font-size:11px">${fmtDate(c.clicked_at)}</td>
-                  <td>${c.slug || '—'}</td>
-                  <td class="font-mono">${c.ip || '—'}</td>
-                  <td>${c.device || '—'}</td>
+                  <td>${escHtml(c.slug) || '—'}</td>
+                  <td class="font-mono">${escHtml(c.ip) || '—'}</td>
+                  <td>${escHtml(c.device) || '—'}</td>
                 </tr>
             `).join('');
         }
@@ -807,21 +814,21 @@ function renderLinks(links) {
     tbody.innerHTML = links.map(l => `
         <tr>
           <td>
-            <a href="/pay/${l.slug}" target="_blank" class="text-accent font-mono">/${l.slug}</a>
-            <div style="font-size:11px;color:var(--text-muted)">${l.title}</div>
+            <a href="/pay/${encodeURIComponent(l.slug)}" target="_blank" class="text-accent font-mono">/${escHtml(l.slug)}</a>
+            <div style="font-size:11px;color:var(--text-muted)">${escHtml(l.title)}</div>
           </td>
           <td>
-            <span class="badge ${l.sub_user_id ? 'badge-blue' : 'badge-purple'}">${l.owner_name || 'Reseller'}</span>
+            <span class="badge ${l.sub_user_id ? 'badge-blue' : 'badge-purple'}">${escHtml(l.owner_name || 'Reseller')}</span>
           </td>
-          <td><span class="badge badge-purple">${l.theme}</span></td>
-          <td>${l.amount_type === 'fixed' ? '$' + l.fixed_amount : 'Open ($' + l.min_amount + '—$' + l.max_amount + ')'}</td>
+          <td><span class="badge badge-purple">${escHtml(l.theme)}</span></td>
+          <td>${l.amount_type === 'fixed' ? '$' + parseFloat(l.fixed_amount).toFixed(2) : 'Open ($' + l.min_amount + '—$' + (l.max_amount ?? '∞') + ')'}</td>
           <td>${l.clicks}</td>
           <td>${l.invoice_count || 0}</td>
           <td>${statusBadge(l.status)}</td>
           <td>
             <div class="flex gap-8">
-              <button class="btn btn-sm btn-ghost" onclick="openAssignModal(${l.id}, '${l.slug}', ${l.sub_user_id || 'null'})" title="Assign to Merchant / User">👤 Assign</button>
-              <button class="btn btn-sm btn-ghost" onclick="copyLink('${l.slug}')" title="Copy">📋</button>
+              <button class="btn btn-sm btn-ghost" onclick="openAssignModal(${l.id}, '${escHtml(l.slug)}', ${l.sub_user_id || 'null'})" title="Assign to Merchant / User">👤 Assign</button>
+              <button class="btn btn-sm btn-ghost" onclick="copyLink('${escHtml(l.slug)}')" title="Copy">📋</button>
               <button class="btn btn-sm ${l.status === 'active' ? 'btn-outline-red' : 'btn-outline-green'}" onclick="toggleLink(${l.id})">${l.status === 'active' ? 'Disable' : 'Enable'}</button>
               <button class="btn btn-sm btn-danger" onclick="deleteLink(${l.id})">🗑</button>
             </div>
@@ -1050,19 +1057,19 @@ async function loadPayments() {
         }
 
         tbody.innerHTML = data.payments.map(p => {
-            const locationTag = p.payer_location ? `<div style="font-size:10px; color:#9ca3af; font-family:sans-serif; margin-top:2px;">${p.payer_location}</div>` : '';
+            const locationTag = p.payer_location ? `<div style="font-size:10px; color:#9ca3af; font-family:sans-serif; margin-top:2px;">${escHtml(p.payer_location)}</div>` : '';
             return `
             <tr>
               <td class="font-mono" style="font-size:11px">${fmtDate(p.created_at)}</td>
-              <td class="text-accent">/${p.slug || '—'}</td>
+              <td class="text-accent">/${escHtml(p.slug) || '—'}</td>
               <td class="font-mono" style="font-size:11px">
-                <div>${p.payer_ip || '—'}</div>
+                <div>${escHtml(p.payer_ip) || '—'}</div>
                 ${locationTag}
               </td>
               <td>$${parseFloat(p.amount_usd).toFixed(2)}</td>
               <td style="color:var(--text-muted)">$${parseFloat(p.charge_usd).toFixed(2)}</td>
               <td class="text-green font-mono">$${parseFloat(p.total_usd).toFixed(2)}</td>
-              <td class="font-mono" style="font-size:11px">${p.receiving_wallet ? p.receiving_wallet.substring(0,20)+'...' : '—'}</td>
+              <td class="font-mono" style="font-size:11px">${p.receiving_wallet ? escHtml(p.receiving_wallet.substring(0,20))+'...' : '—'}</td>
               <td>${statusBadge(p.status)}</td>
               <td>
                 ${!p.seller_checked ? `<button class="btn btn-sm btn-ghost" onclick="checkPayment(${p.id})">✓ Check</button>` : '<span class="badge badge-green">Checked</span>'}
@@ -1125,8 +1132,8 @@ async function loadActivity() {
             <div class="timeline-item">
               <div class="timeline-dot">${eventIcons[a.event] || '📋'}</div>
               <div class="timeline-content">
-                <div class="timeline-event">${a.actor} — ${a.event.replace(/_/g, ' ')}</div>
-                <div class="timeline-meta">${fmtDate(a.created_at)} · IP: ${a.ip || '—'} · ${truncate(a.device, 50)}</div>
+                <div class="timeline-event">${escHtml(a.actor)} — ${escHtml(a.event ? a.event.replace(/_/g, ' ') : '')}</div>
+                <div class="timeline-meta">${fmtDate(a.created_at)} · IP: ${escHtml(a.ip) || '—'} · ${escHtml(truncate(a.device, 50))}</div>
               </div>
             </div>
         `).join('');
@@ -1166,8 +1173,8 @@ function renderUsers(users) {
     }
     tbody.innerHTML = users.map(u => `
         <tr>
-          <td>${u.name}</td>
-          <td class="text-secondary">${u.email}</td>
+          <td>${escHtml(u.name)}</td>
+          <td class="text-secondary">${escHtml(u.email)}</td>
           <td>${u.rate_per_dollar}x</td>
           <td>${u.link_count || 0}</td>
           <td class="text-green font-mono">$${parseFloat(u.balance_usd).toFixed(2)}</td>
@@ -1190,7 +1197,7 @@ function renderWithdrawals(withdrawals) {
     }
     tbody.innerHTML = withdrawals.map(w => `
         <tr>
-          <td>${w.name} <span class="text-muted" style="font-size:11px">${w.email}</span></td>
+          <td>${escHtml(w.name)} <span class="text-muted" style="font-size:11px">${escHtml(w.email)}</span></td>
           <td class="font-mono">$${parseFloat(w.amount_usd).toFixed(2)}</td>
           <td>${w.rate}x</td>
           <td class="font-mono text-green">$${parseFloat(w.payout_amount).toFixed(2)}</td>

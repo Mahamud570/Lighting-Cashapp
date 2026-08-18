@@ -8,6 +8,11 @@ const fs = require('fs');
 const axios = require('axios'); // top-level (A-005 fix)
 const InvoiceChecker = require('./services/invoiceChecker'); // DRY fix BUG-003
 
+if (!process.env.JWT_SECRET) {
+    console.error('FATAL: JWT_SECRET environment variable is missing. The application will not start without a secure JWT_SECRET.');
+    process.exit(1);
+}
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
@@ -49,7 +54,6 @@ app.use('/', require('./routes/users'));
 app.use('/', require('./routes/security'));
 app.use('/', require('./routes/sweeps'));
 app.use('/', require('./routes/webhooks'));
-app.use('/', require('./routes/twoFactor'));
 app.use('/', require('./routes/analytics'));
 app.use('/', require('./routes/owner'));
 
@@ -101,8 +105,7 @@ app.get('/', (req, res) => {
     const token = req.cookies?.auth_token;
     if (!token) return res.redirect('/login');
     try {
-        const jwtSecret = process.env.JWT_SECRET || 'lightning_pay_production_jwt_secret_key_2026_x99';
-        const decoded = require('jsonwebtoken').verify(token, jwtSecret);
+        const decoded = require('jsonwebtoken').verify(token, process.env.JWT_SECRET);
         const role = decoded.role;
         if (role === 'owner') return res.redirect('/owner');
         if (role === 'sub_user') return res.redirect('/subuser');
@@ -118,8 +121,10 @@ app.use((req, res) => {
     res.status(404).sendFile('404.html', { root: path.join(__dirname, 'public') });
 });
 
-// Socket.io - real-time payment updates with auth & authorization
+// Socket.io - real-time payment updates with strict auth & authorization
 const jwt = require('jsonwebtoken');
+const db = require('./database/db');
+
 io.use((socket, next) => {
     const cookieHeader = socket.handshake.headers?.cookie || '';
     let token = null;
@@ -129,8 +134,7 @@ io.use((socket, next) => {
 
     if (token) {
         try {
-            const jwtSecret = process.env.JWT_SECRET || 'lightning_pay_production_jwt_secret_key_2026_x99';
-            socket.user = jwt.verify(token, jwtSecret);
+            socket.user = jwt.verify(token, process.env.JWT_SECRET);
         } catch (_) {}
     }
     next();
@@ -143,10 +147,31 @@ io.on('connection', (socket) => {
             socket.join(`reseller:${resellerId}`);
         }
     });
-    socket.on('subscribe:payment', (paymentId) => {
-        if (paymentId) {
-            socket.join(`payment:${paymentId}`);
-        }
+
+    socket.on('subscribe:payment', async (data) => {
+        try {
+            const paymentId = typeof data === 'object' ? data.paymentId : data;
+            const invoiceId = typeof data === 'object' ? (data.invoiceId || data.invoice_id) : null;
+            const reqId = parseInt(paymentId, 10);
+            if (isNaN(reqId) || reqId <= 0) return;
+
+            // Authenticated user check
+            if (socket.user) {
+                if (socket.user.role === 'owner') {
+                    return socket.join(`payment:${reqId}`);
+                }
+                const [row] = await db.query('SELECT reseller_id, sub_user_id FROM payments WHERE id = ?', [reqId]);
+                if (row.length && (row[0].reseller_id === socket.user.id || row[0].reseller_id === socket.user.reseller_id || row[0].sub_user_id === socket.user.id)) {
+                    return socket.join(`payment:${reqId}`);
+                }
+            } else if (invoiceId) {
+                // Public payer on checkout page validating matching invoice_id
+                const [row] = await db.query('SELECT id FROM payments WHERE id = ? AND (invoice_id = ? OR lightning_invoice = ?)', [reqId, String(invoiceId), String(invoiceId)]);
+                if (row.length) {
+                    return socket.join(`payment:${reqId}`);
+                }
+            }
+        } catch (_) {}
     });
 });
 
@@ -171,19 +196,22 @@ const paymentPollInterval = setInterval(async () => {
             const { paid, expired } = await InvoiceChecker.check(payment);
             const newStatus = paid ? 'paid' : (expired ? 'expired' : null);
 
-            if (newStatus) {
-                await db.query(
-                    "UPDATE payments SET status = ?, paid_at = datetime('now') WHERE id = ?",
-                    [newStatus, payment.id]
+            if (newStatus === 'paid') {
+                const [updateResult] = await db.query(
+                    "UPDATE payments SET status = 'paid', paid_at = datetime('now') WHERE id = ? AND status = 'pending'",
+                    [payment.id]
                 );
-                io.to(`reseller:${payment.reseller_id}`).emit('payment:update', { id: payment.id, status: newStatus });
-                io.to(`payment:${payment.id}`).emit('status', { status: newStatus });
-
-                if (newStatus === 'paid') {
+                if (updateResult && updateResult.affectedRows === 1) {
+                    io.to(`reseller:${payment.reseller_id}`).emit('payment:update', { id: payment.id, status: 'paid' });
+                    io.to(`payment:${payment.id}`).emit('status', { status: 'paid' });
                     PayoutService.processAutoSettlement(payment.id, io).catch(err => {
                         console.error('Auto settlement trigger failed in polling loop:', err);
                     });
                 }
+            } else if (newStatus === 'expired') {
+                await db.query("UPDATE payments SET status = 'expired' WHERE id = ? AND status = 'pending'", [payment.id]);
+                io.to(`reseller:${payment.reseller_id}`).emit('payment:update', { id: payment.id, status: 'expired' });
+                io.to(`payment:${payment.id}`).emit('status', { status: 'expired' });
             }
         }
 
