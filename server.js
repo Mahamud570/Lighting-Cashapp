@@ -5,13 +5,45 @@ const { Server } = require('socket.io');
 const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const axios = require('axios');
 const InvoiceChecker = require('./services/invoiceChecker');
 
-if (!process.env.JWT_SECRET) {
-    console.error('FATAL: JWT_SECRET environment variable is missing. The application will not start without a secure JWT_SECRET.');
-    process.exit(1);
+// cPanel/Passenger does not always inherit .env values. Keep an explicit
+// JWT_SECRET if one is configured, otherwise create a persistent local secret
+// so a missing environment variable cannot crash the entire Node application.
+// The generated secret is stored outside version control and survives restarts.
+function loadJwtSecret() {
+    if (process.env.JWT_SECRET && process.env.JWT_SECRET.trim()) {
+        return process.env.JWT_SECRET.trim();
+    }
+
+    const dataDir = path.join(__dirname, 'data');
+    const secretFile = path.join(dataDir, '.jwt-secret');
+
+    try {
+        if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+        if (fs.existsSync(secretFile)) {
+            const existing = fs.readFileSync(secretFile, 'utf8').trim();
+            if (existing.length >= 32) {
+                console.warn('[security] JWT_SECRET is not configured in the environment; using persistent local secret. Configure JWT_SECRET in cPanel for best practice.');
+                return existing;
+            }
+        }
+
+        const generated = crypto.randomBytes(64).toString('hex');
+        fs.writeFileSync(secretFile, generated, { encoding: 'utf8', mode: 0o600 });
+        console.warn('[security] JWT_SECRET was missing. Generated a persistent local secret at data/.jwt-secret. Configure JWT_SECRET in cPanel to replace it with a managed secret.');
+        return generated;
+    } catch (err) {
+        console.error('[security] Unable to create a persistent JWT secret:', err.message);
+        // Last-resort process-local secret prevents an immediate cPanel 503.
+        // Sessions/tokens will invalidate after a process restart in this rare case.
+        return crypto.randomBytes(64).toString('hex');
+    }
 }
+
+process.env.JWT_SECRET = loadJwtSecret();
 
 const app = express();
 const server = http.createServer(app);
