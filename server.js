@@ -36,7 +36,13 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use(express.json());
+// Keep the exact JSON bytes for signed webhooks (especially BTCPay).
+// BTCPay-Sig is HMAC-SHA256 over the raw request body, not JSON.stringify(req.body).
+app.use(express.json({
+    verify: (req, res, buf) => {
+        req.rawBody = Buffer.from(buf);
+    }
+}));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
