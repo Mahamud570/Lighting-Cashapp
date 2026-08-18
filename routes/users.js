@@ -7,7 +7,6 @@ const bcrypt = require('bcryptjs');
 
 router.use('/api/users', auth, requireRole('reseller', 'owner'));
 
-// GET /api/users
 router.get('/api/users', auth, async (req, res) => {
     try {
         const [users] = await db.query(
@@ -19,18 +18,16 @@ router.get('/api/users', auth, async (req, res) => {
         );
         res.json(users);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Failed to load users' });
     }
 });
 
-// POST /api/users
 router.post('/api/users', auth, async (req, res) => {
     try {
         const { name, email, password, rate_per_dollar, charge_mode, charge_value } = req.body;
         if (!name || !email || !password) return res.status(400).json({ error: 'Name, email, password required' });
         if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
-        // Validate rate_per_dollar bounds (0.01–100)
         const rate = parseFloat(rate_per_dollar);
         if (rate_per_dollar !== undefined && (isNaN(rate) || rate < 0.01 || rate > 100)) {
             return res.status(400).json({ error: 'rate_per_dollar must be between 0.01 and 100' });
@@ -41,17 +38,16 @@ router.post('/api/users', auth, async (req, res) => {
 
         const hash = await bcrypt.hash(password, 12);
         await db.query(
-            'INSERT INTO sub_users (reseller_id, name, email, password, rate_per_dollar, charge_mode, charge_value, must_change_password) VALUES (?,?,?,?,?,?,?,1)',
+            'INSERT INTO sub_users (reseller_id, name, email, password, rate_per_dollar, charge_mode, charge_value, must_change_password) VALUES (?,?,?,?,?,?,?,0)',
             [req.reseller.id, name, email, hash, rate || 1, charge_mode || 'inherit', charge_value || 0]
         );
 
         res.json({ success: true, temporary_password: password });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Failed to create sub-user' });
     }
 });
 
-// PATCH /api/users/:id/status
 router.patch('/api/users/:id/status', auth, async (req, res) => {
     try {
         const [user] = await db.query('SELECT * FROM sub_users WHERE id = ? AND reseller_id = ?', [req.params.id, req.reseller.id]);
@@ -60,44 +56,42 @@ router.patch('/api/users/:id/status', auth, async (req, res) => {
         await db.query('UPDATE sub_users SET status = ? WHERE id = ?', [newStatus, req.params.id]);
         res.json({ success: true, status: newStatus });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Failed to update user status' });
     }
 });
 
-// DELETE /api/users/:id
 router.delete('/api/users/:id', auth, async (req, res) => {
     try {
-        await db.query('DELETE FROM sub_users WHERE id = ? AND reseller_id = ?', [req.params.id, req.reseller.id]);
-        res.json({ success: true });
+        const [result] = await db.query('DELETE FROM sub_users WHERE id = ? AND reseller_id = ?', [req.params.id, req.reseller.id]);
+        res.json({ success: true, deleted: !!result.affectedRows });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Failed to delete user' });
     }
 });
 
-// GET /api/users/withdrawals
 router.get('/api/users/withdrawals', auth, async (req, res) => {
     try {
         const [rows] = await db.query(
-            `SELECT w.*, su.name, su.email FROM withdrawals w 
+            `SELECT w.*, su.name, su.email FROM withdrawals w
              LEFT JOIN sub_users su ON w.sub_user_id = su.id
              WHERE w.reseller_id = ? ORDER BY w.created_at DESC`,
             [req.reseller.id]
         );
         res.json(rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Failed to load withdrawals' });
     }
 });
 
-// PATCH /api/users/withdrawals/:id - approve/reject
 router.patch('/api/users/withdrawals/:id', auth, async (req, res) => {
     try {
         const { status } = req.body;
         if (!['approved', 'rejected'].includes(status)) return res.status(400).json({ error: 'Invalid status' });
-        await db.query('UPDATE withdrawals SET status = ? WHERE id = ? AND reseller_id = ?', [status, req.params.id, req.reseller.id]);
+        const [result] = await db.query('UPDATE withdrawals SET status = ? WHERE id = ? AND reseller_id = ?', [status, req.params.id, req.reseller.id]);
+        if (!result.affectedRows) return res.status(404).json({ error: 'Withdrawal not found' });
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Failed to update withdrawal' });
     }
 });
 
