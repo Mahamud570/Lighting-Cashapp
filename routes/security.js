@@ -6,54 +6,45 @@ const { requireRole } = auth;
 const bcrypt = require('bcryptjs');
 const speakeasy = require('speakeasy');
 const qrcode = require('qrcode');
-const crypto = require('crypto');
 
-// GET /api/security/status
+const TRUST_COOKIE = 'trusted_browser';
+
+function clearTrustCookie(res) {
+    res.clearCookie(TRUST_COOKIE, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax'
+    });
+}
+
 router.get('/api/security/status', auth, requireRole('reseller', 'owner'), async (req, res) => {
-    // FIX: Wrapped in try/catch — missing handler caused unhandled promise rejection
     try {
         const r = req.reseller;
-
-        // Get active (non-expired) trusted devices
         const [devices] = await db.query(
             "SELECT id, ip, device_type, user_agent, last_active, expires_at FROM sessions WHERE reseller_id = ? AND expires_at > datetime('now') ORDER BY last_active DESC",
             [r.id]
         );
-
-        // Get activity log
+        const [trusted] = await db.query(
+            "SELECT id, label, ip, device_type, user_agent, created_at, last_used, expires_at FROM trusted_devices WHERE reseller_id = ? AND revoked_at IS NULL AND expires_at > datetime('now') ORDER BY last_used DESC",
+            [r.id]
+        );
         const [activity] = await db.query(
             'SELECT event, actor, ip, device, created_at FROM activities WHERE reseller_id = ? ORDER BY created_at DESC LIMIT 20',
             [r.id]
         );
-
-        res.json({
-            totp_enabled: !!r.totp_enabled,
-            devices,
-            activity
-        });
+        res.json({ totp_enabled: !!r.totp_enabled, devices, trusted_browsers: trusted, activity, current_session_id: req.sessionId });
     } catch (err) {
         console.error('Security status error:', err);
         res.status(500).json({ error: 'Failed to load security status' });
     }
 });
 
-// POST /api/security/totp/setup - generate TOTP secret & QR
-// The secret is stored immediately in `totp_secret` but `totp_enabled` stays 0
-// until the user verifies via /totp/enable. This is an acceptable two-phase pattern
-// because possession of a TOTP secret without totp_enabled=1 has no security impact.
 router.post('/api/security/totp/setup', auth, requireRole('reseller', 'owner'), async (req, res) => {
     try {
-        const secret = speakeasy.generateSecret({
-            name:   `LightningPay (${req.reseller.username})`,
-            length: 20
-        });
-
-        // Stage the secret — it becomes active only after /totp/enable confirms it
-        await db.query(
-            'UPDATE resellers SET totp_secret = ?, totp_enabled = 0 WHERE id = ?',
-            [secret.base32, req.reseller.id]
-        );
-
+        const secret = speakeasy.generateSecret({ name: `LightningPay (${req.reseller.username})`, length: 20 });
+        await db.query('UPDATE resellers SET totp_secret = ?, totp_enabled = 0 WHERE id = ?', [secret.base32, req.reseller.id]);
+        await db.query('DELETE FROM trusted_devices WHERE reseller_id = ?', [req.reseller.id]).catch(() => {});
+        clearTrustCookie(res);
         const qrUrl = await qrcode.toDataURL(secret.otpauth_url);
         res.json({ secret: secret.base32, qr: qrUrl });
     } catch (err) {
@@ -61,120 +52,70 @@ router.post('/api/security/totp/setup', auth, requireRole('reseller', 'owner'), 
     }
 });
 
-// POST /api/security/totp/enable
 router.post('/api/security/totp/enable', auth, requireRole('reseller', 'owner'), async (req, res) => {
     try {
         const { code } = req.body;
         const r = req.reseller;
-
         if (!r.totp_secret) return res.status(400).json({ error: 'Setup TOTP first' });
-
-        const valid = speakeasy.totp.verify({
-            secret: r.totp_secret,
-            encoding: 'base32',
-            token: code,
-            window: 2
-        });
-
+        const valid = speakeasy.totp.verify({ secret: r.totp_secret, encoding: 'base32', token: code, window: 2 });
         if (!valid) return res.status(400).json({ error: 'Invalid code' });
-
         await db.query('UPDATE resellers SET totp_enabled = 1 WHERE id = ?', [r.id]);
+        await db.query('DELETE FROM trusted_devices WHERE reseller_id = ?', [r.id]).catch(() => {});
+        clearTrustCookie(res);
         res.json({ success: true, message: '2FA enabled successfully' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// POST /api/security/totp/disable
-// S-004 FIX: Require current password in addition to TOTP code before disabling 2FA.
-// Without this, a captured 30-second TOTP code (e.g. via shoulder surfing) could
-// permanently disable 2FA with no password barrier.
 router.post('/api/security/totp/disable', auth, requireRole('reseller', 'owner'), async (req, res) => {
     try {
         const { code, current_password } = req.body;
         const r = req.reseller;
-
-        // Require current password as a second factor before disabling 2FA
-        if (!current_password) {
-            return res.status(400).json({ error: 'Current password is required to disable 2FA' });
-        }
-
-        // Fetch full reseller record to get hashed password
+        if (!current_password) return res.status(400).json({ error: 'Current password is required to disable 2FA' });
         const [rows] = await db.query('SELECT password FROM resellers WHERE id = ?', [r.id]);
         if (!rows.length) return res.status(404).json({ error: 'Account not found' });
-
-        const passwordValid = await bcrypt.compare(current_password, rows[0].password);
-        if (!passwordValid) {
-            return res.status(403).json({ error: 'Incorrect current password' });
-        }
-
-        if (!r.totp_secret) {
-            return res.status(400).json({ error: '2FA is not configured' });
-        }
-
-        const valid = speakeasy.totp.verify({
-            secret:   r.totp_secret,
-            encoding: 'base32',
-            token:    code,
-            window:   2
-        });
-
+        if (!(await bcrypt.compare(current_password, rows[0].password))) return res.status(403).json({ error: 'Incorrect current password' });
+        if (!r.totp_secret) return res.status(400).json({ error: '2FA is not configured' });
+        const valid = speakeasy.totp.verify({ secret: r.totp_secret, encoding: 'base32', token: code, window: 2 });
         if (!valid) return res.status(400).json({ error: 'Invalid 2FA code' });
 
         await db.query('UPDATE resellers SET totp_enabled = 0, totp_secret = NULL WHERE id = ?', [r.id]);
-
-        // Log this security event
+        await db.query('DELETE FROM trusted_devices WHERE reseller_id = ?', [r.id]).catch(() => {});
+        clearTrustCookie(res);
         await db.query(
             'INSERT INTO activities (reseller_id, actor, event, ip, device) VALUES (?,?,?,?,?)',
             [r.id, r.username, '2fa_disabled', req.clientIp || req.ip, req.headers['user-agent']]
         );
-
         res.json({ success: true, message: '2FA disabled' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to disable 2FA' });
     }
 });
 
-// POST /api/security/password
-// S-008 FIX: Require current password verification before changing password.
-// Previously, any authenticated session could change the password with no additional
-// proof of identity — a stolen session cookie would be enough for a full account takeover.
 router.post('/api/security/password', auth, async (req, res) => {
     try {
         const { current_password, new_password, confirm_password } = req.body || {};
-
-        if (!current_password) {
-            return res.status(400).json({ error: 'Current password is required' });
-        }
-        if (!new_password || new_password.length < 8) {
-            return res.status(400).json({ error: 'New password must be at least 8 characters' });
-        }
-        if (new_password !== confirm_password) {
-            return res.status(400).json({ error: 'Passwords do not match' });
-        }
-        if (new_password === current_password) {
-            return res.status(400).json({ error: 'New password must differ from current password' });
-        }
+        if (!current_password) return res.status(400).json({ error: 'Current password is required' });
+        if (!new_password || new_password.length < 8) return res.status(400).json({ error: 'New password must be at least 8 characters' });
+        if (new_password !== confirm_password) return res.status(400).json({ error: 'Passwords do not match' });
+        if (new_password === current_password) return res.status(400).json({ error: 'New password must differ from current password' });
 
         const isSubUser = !!req.sub_user;
         const targetTable = isSubUser ? 'sub_users' : 'resellers';
         const targetId = isSubUser ? req.sub_user.id : req.reseller.id;
-
-        // Fetch hashed password to verify current password
         const [rows] = await db.query(`SELECT password FROM ${targetTable} WHERE id = ?`, [targetId]);
         if (!rows.length) return res.status(404).json({ error: 'Account not found' });
-
-        const currentValid = await bcrypt.compare(current_password, rows[0].password);
-        if (!currentValid) {
-            return res.status(403).json({ error: 'Incorrect current password' });
-        }
+        if (!(await bcrypt.compare(current_password, rows[0].password))) return res.status(403).json({ error: 'Incorrect current password' });
 
         const hash = await bcrypt.hash(new_password, 12);
         await db.query(`UPDATE ${targetTable} SET password = ?, must_change_password = 0 WHERE id = ?`, [hash, targetId]);
+        if (req.tokenHash) await db.query('DELETE FROM sessions WHERE reseller_id = ? AND token_hash != ?', [req.reseller.id, req.tokenHash]).catch(() => {});
 
-        // Revoke all other active sessions for this account across devices
-        if (req.tokenHash) {
-            await db.query('DELETE FROM sessions WHERE reseller_id = ? AND token_hash != ?', [req.reseller.id, req.tokenHash]).catch(() => {});
+        // Password changes invalidate saved/trusted browsers for reseller/owner accounts.
+        if (!isSubUser) {
+            await db.query('DELETE FROM trusted_devices WHERE reseller_id = ?', [req.reseller.id]).catch(() => {});
+            clearTrustCookie(res);
         }
 
         if (isSubUser) {
@@ -188,19 +129,89 @@ router.post('/api/security/password', auth, async (req, res) => {
                 [req.reseller.id, req.reseller.username, 'password_changed', req.clientIp || req.ip, req.headers['user-agent']]
             );
         }
-
         res.json({ success: true, message: 'Password updated successfully' });
     } catch (err) {
         res.status(500).json({ error: 'Failed to update password' });
     }
 });
 
-// DELETE /api/security/devices/:tokenHash - remove device
+// Modern session management API.
+router.get('/api/security/sessions', auth, requireRole('reseller', 'owner'), async (req, res) => {
+    try {
+        await db.query("DELETE FROM sessions WHERE reseller_id = ? AND expires_at <= datetime('now')", [req.reseller.id]).catch(() => {});
+        const [sessions] = await db.query(
+            "SELECT id, ip, user_agent, device_type, last_active, created_at, expires_at FROM sessions WHERE reseller_id = ? AND expires_at > datetime('now') ORDER BY last_active DESC",
+            [req.reseller.id]
+        );
+        res.json({ sessions, current_session_id: req.sessionId });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load sessions' });
+    }
+});
+
+router.delete('/api/security/sessions/:id', auth, requireRole('reseller', 'owner'), async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid session' });
+        if (id === Number(req.sessionId)) return res.status(400).json({ error: 'Use Logout to end the current session' });
+        const [result] = await db.query('DELETE FROM sessions WHERE id = ? AND reseller_id = ?', [id, req.reseller.id]);
+        if (!result.affectedRows) return res.status(404).json({ error: 'Session not found' });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to revoke session' });
+    }
+});
+
+router.delete('/api/security/sessions', auth, requireRole('reseller', 'owner'), async (req, res) => {
+    try {
+        await db.query('DELETE FROM sessions WHERE reseller_id = ? AND id != ?', [req.reseller.id, req.sessionId]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to revoke other sessions' });
+    }
+});
+
+router.get('/api/security/trusted-browsers', auth, requireRole('reseller', 'owner'), async (req, res) => {
+    try {
+        await db.query("DELETE FROM trusted_devices WHERE reseller_id = ? AND expires_at <= datetime('now')", [req.reseller.id]).catch(() => {});
+        const [devices] = await db.query(
+            "SELECT id, label, ip, user_agent, device_type, created_at, last_used, expires_at FROM trusted_devices WHERE reseller_id = ? AND revoked_at IS NULL AND expires_at > datetime('now') ORDER BY last_used DESC",
+            [req.reseller.id]
+        );
+        res.json({ devices });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load trusted browsers' });
+    }
+});
+
+router.delete('/api/security/trusted-browsers/:id', auth, requireRole('reseller', 'owner'), async (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid trusted browser' });
+        const [result] = await db.query('DELETE FROM trusted_devices WHERE id = ? AND reseller_id = ?', [id, req.reseller.id]);
+        if (!result.affectedRows) return res.status(404).json({ error: 'Trusted browser not found' });
+        // Clearing the local cookie is safe even when revoking a different device.
+        clearTrustCookie(res);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to remove trusted browser' });
+    }
+});
+
+router.delete('/api/security/trusted-browsers', auth, requireRole('reseller', 'owner'), async (req, res) => {
+    try {
+        await db.query('DELETE FROM trusted_devices WHERE reseller_id = ?', [req.reseller.id]);
+        clearTrustCookie(res);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to remove trusted browsers' });
+    }
+});
+
+// Backward-compatible device endpoints used by older UI code.
 router.delete('/api/security/devices/:tokenHash', auth, requireRole('reseller', 'owner'), async (req, res) => {
     try {
-        if (req.params.tokenHash === req.tokenHash) {
-            return res.status(400).json({ error: 'Cannot remove current device' });
-        }
+        if (req.params.tokenHash === req.tokenHash) return res.status(400).json({ error: 'Cannot remove current device' });
         await db.query('DELETE FROM sessions WHERE token_hash = ? AND reseller_id = ?', [req.params.tokenHash, req.reseller.id]);
         res.json({ success: true });
     } catch (err) {
@@ -208,7 +219,6 @@ router.delete('/api/security/devices/:tokenHash', auth, requireRole('reseller', 
     }
 });
 
-// DELETE /api/security/devices - remove all other devices
 router.delete('/api/security/devices', auth, requireRole('reseller', 'owner'), async (req, res) => {
     try {
         await db.query('DELETE FROM sessions WHERE reseller_id = ? AND token_hash != ?', [req.reseller.id, req.tokenHash]);
@@ -218,7 +228,6 @@ router.delete('/api/security/devices', auth, requireRole('reseller', 'owner'), a
     }
 });
 
-// GET /api/security/devices
 router.get('/api/security/devices', auth, requireRole('reseller', 'owner'), async (req, res) => {
     try {
         const [devices] = await db.query(
