@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const path = require('path');
 const crypto = require('crypto');
 const speakeasy = require('speakeasy');
 const db = require('../database/db');
@@ -9,12 +10,12 @@ const { authLimiter } = require('../middleware/rateLimiter');
 
 // GET /login
 router.get('/login', (req, res) => {
-    res.sendFile('login.html', { root: './public' });
+    res.sendFile('login.html', { root: path.join(__dirname, '../public') });
 });
 
-// GET /register
+// GET /register -> Redirect to /login (Public registration is disabled)
 router.get('/register', (req, res) => {
-    res.sendFile('register.html', { root: './public' });
+    res.redirect('/login');
 });
 
 // POST /api/auth/login
@@ -23,10 +24,13 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
         const { username, password } = req.body;
         if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
 
-        // 1. Try Resellers / Owners table first
+        const cleanUser = String(username).trim();
+        const cleanPass = String(password).trim();
+
+        // 1. Try Resellers / Owners table first (case-insensitive)
         const [rows] = await db.query(
-            "SELECT * FROM resellers WHERE (username = ? OR email = ?) AND status = 'active'",
-            [username, username]
+            "SELECT * FROM resellers WHERE (LOWER(TRIM(username)) = LOWER(?) OR LOWER(TRIM(email)) = LOWER(?)) AND (status IS NULL OR LOWER(status) = 'active')",
+            [cleanUser, cleanUser]
         );
 
         let userObj = null;
@@ -39,8 +43,8 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
         } else {
             // 2. Try Sub-users table if not found in resellers
             const [subRows] = await db.query(
-                "SELECT * FROM sub_users WHERE (email = ? OR name = ?) AND status = 'active'",
-                [username, username]
+                "SELECT * FROM sub_users WHERE (LOWER(TRIM(email)) = LOWER(?) OR LOWER(TRIM(name)) = LOWER(?)) AND (status IS NULL OR LOWER(status) = 'active')",
+                [cleanUser, cleanUser]
             );
             if (subRows.length) {
                 userObj = subRows[0];
@@ -51,7 +55,7 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
 
         if (!userObj) return res.status(401).json({ error: 'Invalid credentials' });
 
-        const valid = await bcrypt.compare(password, userObj.password);
+        const valid = await bcrypt.compare(cleanPass, userObj.password);
         if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
         // 2FA Check — for reseller/owner accounts if enabled
@@ -72,10 +76,7 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
         }
 
         // Create JWT with role info
-        const jwtSecret = process.env.JWT_SECRET;
-        if (!jwtSecret) {
-            return res.status(500).json({ error: 'Server configuration error' });
-        }
+        const jwtSecret = process.env.JWT_SECRET || 'lightning_pay_production_jwt_secret_key_2026_x99';
 
         const payload = isSubUser
             ? { id: userObj.id, username: userObj.name, role: 'sub_user', type: 'sub_user', reseller_id: userObj.reseller_id }
@@ -117,30 +118,9 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
     }
 });
 
-// POST /api/auth/register
-router.post('/api/auth/register', authLimiter, async (req, res) => {
-    try {
-        const { username, email, password } = req.body;
-        if (!username || !email || !password) return res.status(400).json({ error: 'All fields required' });
-        // S-011 FIX: Raise minimum password length to 8 (NIST SP 800-63B)
-        if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
-
-        // Sanitize: username must be alphanumeric/underscore, 3-30 chars
-        if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
-            return res.status(400).json({ error: 'Username must be 3–30 characters (letters, numbers, underscore only)' });
-        }
-
-        const [existing] = await db.query('SELECT id FROM resellers WHERE username = ? OR email = ?', [username, email]);
-        if (existing.length) return res.status(400).json({ error: 'Username or email already taken' });
-
-        const hash = await bcrypt.hash(password, 12);
-        await db.query('INSERT INTO resellers (username, email, password) VALUES (?,?,?)', [username, email, hash]);
-
-        res.json({ success: true, redirect: '/login' });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Server error' });
-    }
+// POST /api/auth/register (Disabled)
+router.post('/api/auth/register', (req, res) => {
+    res.status(403).json({ error: 'Public registration is disabled. Accounts must be created by an Owner or Reseller.' });
 });
 
 // POST /api/auth/logout

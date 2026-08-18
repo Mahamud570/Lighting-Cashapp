@@ -1,0 +1,14 @@
+RewriteEngine On
+
+# 1. Disable LiteSpeed Anti-Bot / reCAPTCHA challenge for Social Media crawlers
+<IfModule Litespeed>
+  RewriteCond %{HTTP_USER_AGENT} (TelegramBot|Twitterbot|facebookexternalhit|WhatsApp|Discordbot|Applebot) [NC]
+  RewriteRule .* - [E=noconntimeout:1,E=noabort:1,E=verifycaptcha:off,E=botcheck:off]
+</IfModule>
+
+# 2. Force HTTPS for all requests
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# 4. Prevent directory listing
+Options -Indexes

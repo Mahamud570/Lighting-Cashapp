@@ -43,15 +43,23 @@ const RESERVED_SLUGS = new Set([
 // GET /api/links - list all payment links
 router.get('/api/links', auth, async (req, res) => {
     try {
+        const isSubUser = req.role === 'sub_user';
+        let where = 'pl.reseller_id = ?';
+        const params = [req.reseller.id];
+        if (isSubUser) {
+            where += ' AND pl.sub_user_id = ?';
+            params.push(req.sub_user.id);
+        }
+
         const [links] = await db.query(
             `SELECT pl.*, 
              (SELECT COUNT(*) FROM payments p WHERE p.link_id = pl.id) as invoice_count,
              COALESCE(su.name, 'Reseller') as owner_name
              FROM payment_links pl
              LEFT JOIN sub_users su ON pl.sub_user_id = su.id
-             WHERE pl.reseller_id = ?
+             WHERE ${where}
              ORDER BY pl.created_at DESC`,
-            [req.reseller.id]
+            params
         );
         res.json(links);
     } catch (err) {
@@ -78,13 +86,27 @@ router.post('/api/links', auth, upload.single('logo'), async (req, res) => {
         if (existing.length) return res.status(400).json({ error: 'This payment link URL is already taken' });
 
         const logoPath = req.file ? `/uploads/logos/${req.file.filename}` : null;
+        const isSubUser = req.role === 'sub_user';
+        let linkSubUserId = null;
+        if (isSubUser) {
+            linkSubUserId = req.sub_user.id;
+        } else if (sub_user_id && sub_user_id !== 'null' && sub_user_id !== '') {
+            const targetId = parseInt(sub_user_id, 10);
+            if (req.role !== 'owner') {
+                const [validSub] = await db.query('SELECT id FROM sub_users WHERE id = ? AND reseller_id = ?', [targetId, req.reseller.id]);
+                if (!validSub.length) {
+                    return res.status(403).json({ error: 'Unauthorized: Sub-user does not belong to your account' });
+                }
+            }
+            linkSubUserId = targetId;
+        }
 
         await db.query(
             `INSERT INTO payment_links (reseller_id, sub_user_id, slug, title, brand_name, logo_path, domain, theme, amount_type, fixed_amount, min_amount, max_amount)
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
             [
                 req.reseller.id,
-                sub_user_id || null,
+                linkSubUserId,
                 cleanSlug,
                 String(title).substring(0, 100),                      // max 100 chars
                 String(brand_name || 'Cash Pay').substring(0, 60),    // max 60 chars
@@ -107,7 +129,15 @@ router.post('/api/links', auth, upload.single('logo'), async (req, res) => {
 // PATCH /api/links/:id/status - toggle status
 router.patch('/api/links/:id/status', auth, async (req, res) => {
     try {
-        const [link] = await db.query('SELECT * FROM payment_links WHERE id = ? AND reseller_id = ?', [req.params.id, req.reseller.id]);
+        const isSubUser = req.role === 'sub_user';
+        let query = 'SELECT * FROM payment_links WHERE id = ? AND reseller_id = ?';
+        const params = [req.params.id, req.reseller.id];
+        if (isSubUser) {
+            query += ' AND sub_user_id = ?';
+            params.push(req.sub_user.id);
+        }
+
+        const [link] = await db.query(query, params);
         if (!link.length) return res.status(404).json({ error: 'Link not found' });
 
         const newStatus = link[0].status === 'active' ? 'inactive' : 'active';
@@ -121,8 +151,42 @@ router.patch('/api/links/:id/status', auth, async (req, res) => {
 // DELETE /api/links/:id
 router.delete('/api/links/:id', auth, async (req, res) => {
     try {
-        await db.query('DELETE FROM payment_links WHERE id = ? AND reseller_id = ?', [req.params.id, req.reseller.id]);
+        const isSubUser = req.role === 'sub_user';
+        let query = 'DELETE FROM payment_links WHERE id = ? AND reseller_id = ?';
+        const params = [req.params.id, req.reseller.id];
+        if (isSubUser) {
+            query += ' AND sub_user_id = ?';
+            params.push(req.sub_user.id);
+        }
+
+        const [result] = await db.query(query, params);
         res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// PUT /api/links/:id/assign - assign or reassign link to a sub-user / merchant
+router.put('/api/links/:id/assign', auth, async (req, res) => {
+    try {
+        const { sub_user_id } = req.body;
+        const targetId = (sub_user_id && sub_user_id !== 'null' && sub_user_id !== '') ? parseInt(sub_user_id, 10) : null;
+
+        if (targetId && req.role !== 'owner') {
+            const [validSub] = await db.query('SELECT id FROM sub_users WHERE id = ? AND reseller_id = ?', [targetId, req.reseller.id]);
+            if (!validSub.length) {
+                return res.status(403).json({ error: 'Unauthorized: Sub-user does not belong to your account' });
+            }
+        }
+
+        const [result] = await db.query(
+            'UPDATE payment_links SET sub_user_id = ? WHERE id = ? AND (reseller_id = ? OR ? = "owner")',
+            [targetId, req.params.id, req.reseller.id, req.role || 'reseller']
+        );
+        if (!result.affectedRows) {
+            return res.status(404).json({ error: 'Payment link not found' });
+        }
+        res.json({ success: true, message: 'Link assigned successfully' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

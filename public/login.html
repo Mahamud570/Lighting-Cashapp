@@ -59,12 +59,6 @@
   </div>
 
   <button class="btn btn-primary btn-auth" id="loginBtn" onclick="login()">⚡ Sign In</button>
-
-  <div class="divider">or</div>
-
-  <div class="auth-footer">
-    Don't have an account? <a href="/register" style="color:var(--accent);font-weight:600">Register</a>
-  </div>
 </div>
 
 <div class="toast-container" id="toastContainer"></div>
@@ -99,7 +93,12 @@ async function login() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        const data = await resp.json();
+        let data = {};
+        try {
+            data = await resp.json();
+        } catch (jsonErr) {
+            data = { error: 'Server returned status ' + resp.status + '. Please retry.' };
+        }
 
         if (data.requires_2fa) {
             // Transform login card to 2FA view
@@ -124,7 +123,7 @@ async function login() {
         }
 
         if (!resp.ok) {
-            err.textContent = data.error || 'Login failed';
+            err.textContent = data.error || ('Login failed (HTTP ' + resp.status + ')');
             err.style.display = 'flex';
             btn.disabled = false;
             btn.textContent = totp_code ? '🔑 Verify & Sign In' : '⚡ Sign In';
@@ -133,7 +132,7 @@ async function login() {
 
         window.location.href = data.redirect || '/reseller';
     } catch(e) {
-        err.textContent = 'Connection error. Please try again.';
+        err.textContent = e.message || 'Connection error. Please try again.';
         err.style.display = 'flex';
         btn.disabled = false;
         btn.textContent = totp_code ? '🔑 Verify & Sign In' : '⚡ Sign In';

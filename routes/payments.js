@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const db = require('../database/db');
 const auth = require('../middleware/auth');
+const { requireRole } = auth;
 const { createObjectCsvWriter } = require('csv-writer');
 const path = require('path');
 const fs = require('fs');
@@ -16,8 +17,13 @@ router.get('/api/payments', auth, async (req, res) => {
         const safePage   = Math.max(parseInt(page, 10) || 1, 1);
         const offset     = (safePage - 1) * safeLimit;
 
+        const isSubUser = req.role === 'sub_user';
         let where = 'p.reseller_id = ?';
         const params = [req.reseller.id];
+        if (isSubUser) {
+            where += ' AND p.sub_user_id = ?';
+            params.push(req.sub_user.id);
+        }
 
         if (status && status !== 'all') { where += ' AND p.status = ?'; params.push(status); }
         if (from) { where += ' AND date(p.created_at) >= date(?)'; params.push(from); }
@@ -45,8 +51,13 @@ router.get('/api/payments', auth, async (req, res) => {
 router.get('/api/payments/export', auth, async (req, res) => {
     try {
         const { status, from, to } = req.query;
+        const isSubUser = req.role === 'sub_user';
         let where = 'p.reseller_id = ?';
         const params = [req.reseller.id];
+        if (isSubUser) {
+            where += ' AND p.sub_user_id = ?';
+            params.push(req.sub_user.id);
+        }
 
         if (status && status !== 'all') { where += ' AND p.status = ?'; params.push(status); }
         if (from) { where += ' AND DATE(p.created_at) >= ?'; params.push(from); }
@@ -93,10 +104,15 @@ router.get('/api/payments/export', auth, async (req, res) => {
 // PATCH /api/payments/:id/check - seller check
 router.patch('/api/payments/:id/check', auth, async (req, res) => {
     try {
-        await db.query(
-            'UPDATE payments SET seller_checked = 1 WHERE id = ? AND reseller_id = ?',
-            [req.params.id, req.reseller.id]
-        );
+        const isSubUser = req.role === 'sub_user';
+        let query = 'UPDATE payments SET seller_checked = 1 WHERE id = ? AND reseller_id = ?';
+        const params = [req.params.id, req.reseller.id];
+        if (isSubUser) {
+            query += ' AND sub_user_id = ?';
+            params.push(req.sub_user.id);
+        }
+
+        await db.query(query, params);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -107,8 +123,13 @@ router.patch('/api/payments/:id/check', auth, async (req, res) => {
 router.get('/api/activities', auth, async (req, res) => {
     try {
         const { event, actor, from, to } = req.query;
+        const isSubUser = req.role === 'sub_user';
         let where = 'reseller_id = ?';
         const params = [req.reseller.id];
+        if (isSubUser) {
+            where += ' AND sub_user_id = ?';
+            params.push(req.sub_user.id);
+        }
 
         if (event && event !== 'all') { where += ' AND event = ?'; params.push(event); }
         if (actor && actor !== 'all') { where += ' AND actor = ?'; params.push(actor); }
@@ -127,7 +148,7 @@ router.get('/api/activities', auth, async (req, res) => {
 });
 
 // GET /api/transaction-charge
-router.get('/api/transaction-charge', auth, async (req, res) => {
+router.get('/api/transaction-charge', auth, requireRole('reseller', 'owner'), async (req, res) => {
     res.json({
         charge_mode: req.reseller.charge_mode,
         charge_value: req.reseller.charge_value
@@ -135,7 +156,7 @@ router.get('/api/transaction-charge', auth, async (req, res) => {
 });
 
 // POST /api/transaction-charge
-router.post('/api/transaction-charge', auth, async (req, res) => {
+router.post('/api/transaction-charge', auth, requireRole('reseller', 'owner'), async (req, res) => {
     try {
         const { charge_mode, charge_value } = req.body;
         if (!['none', 'fixed', 'percent'].includes(charge_mode)) {

@@ -2,8 +2,11 @@ const express = require('express');
 const router = express.Router();
 const db = require('../database/db');
 const auth = require('../middleware/auth');
+const { requireRole } = auth;
 const BinanceService = require('../services/binanceService');
 const PayoutService = require('../services/payoutService');
+
+router.use('/api/sweeps*', auth, requireRole('reseller', 'owner'));
 
 // GET /api/sweeps - list auto sweeps and payouts
 router.get('/api/sweeps', auth, async (req, res) => {

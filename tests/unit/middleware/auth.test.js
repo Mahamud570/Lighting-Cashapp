@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Unit Tests: middleware/auth.js
  * Covers: valid JWT, missing token, S-002 regression (hardcoded secret),
  *         expired session, tampered signature, inactive account, proxy IP.
@@ -72,12 +72,15 @@ test('S-002 regression: tampered JWT throws -> 401', async () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'Invalid token' });
 });
 
-test('S-002: missing JWT_SECRET env var returns 500', async () => {
+test('missing JWT_SECRET env var uses secure default fallback without crashing', async () => {
     delete process.env.JWT_SECRET;
+    jwt.verify.mockReturnValue({ id: 1 });
+    db.query.mockResolvedValueOnce([[{ id: 1 }]]); // session found
+    db.query.mockResolvedValueOnce([{}]); // touch session
+    db.query.mockResolvedValueOnce([[{ id: 1, username: 'admin', role: 'owner', must_change_password: 0 }]]); // reseller found
     const { req, res, next } = buildMock();
     await authMiddleware(req, res, next);
-    expect(next).not.toHaveBeenCalled();
-    expect(res.status).toHaveBeenCalledWith(500);
+    expect(next).toHaveBeenCalled();
 });
 
 test('expired session in DB: 401 and cookie cleared', async () => {

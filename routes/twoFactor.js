@@ -4,6 +4,7 @@ const speakeasy = require('speakeasy');
 const QRCode = require('qrcode');
 const db = require('../database/db');
 const auth = require('../middleware/auth');
+const { requireRole } = auth;
 const { totpLimiter } = require('../middleware/rateLimiter');
 
 /**
@@ -15,7 +16,7 @@ const { totpLimiter } = require('../middleware/rateLimiter');
  */
 
 // GET /api/2fa/setup — Generate secret & return QR code
-router.get('/api/2fa/setup', auth, async (req, res) => {
+router.get('/api/2fa/setup', auth, requireRole('reseller', 'owner'), async (req, res) => {
     try {
         const [rows] = await db.query('SELECT username, email, totp_enabled FROM resellers WHERE id = ?', [req.reseller.id]);
         if (!rows.length) return res.status(404).json({ error: 'User not found' });
@@ -51,7 +52,7 @@ router.get('/api/2fa/setup', auth, async (req, res) => {
 });
 
 // POST /api/2fa/verify — Confirm code & activate 2FA
-router.post('/api/2fa/verify', auth, totpLimiter, async (req, res) => {
+router.post('/api/2fa/verify', auth, requireRole('reseller', 'owner'), totpLimiter, async (req, res) => {
     try {
         const { code } = req.body;
         if (!code) return res.status(400).json({ error: 'TOTP code required' });
@@ -80,15 +81,22 @@ router.post('/api/2fa/verify', auth, totpLimiter, async (req, res) => {
     }
 });
 
-// POST /api/2fa/disable — Turn off 2FA (requires current code)
-router.post('/api/2fa/disable', auth, totpLimiter, async (req, res) => {
+// POST /api/2fa/disable — Turn off 2FA (requires current password & TOTP code)
+const bcrypt = require('bcryptjs');
+router.post('/api/2fa/disable', auth, requireRole('reseller', 'owner'), totpLimiter, async (req, res) => {
     try {
-        const { code } = req.body;
+        const { code, current_password } = req.body;
         if (!code) return res.status(400).json({ error: 'Current TOTP code required to disable 2FA' });
+        if (!current_password) return res.status(400).json({ error: 'Current password is required to disable 2FA' });
 
-        const [rows] = await db.query('SELECT totp_secret, totp_enabled FROM resellers WHERE id = ?', [req.reseller.id]);
+        const [rows] = await db.query('SELECT password, totp_secret, totp_enabled FROM resellers WHERE id = ?', [req.reseller.id]);
         if (!rows.length || !rows[0].totp_enabled) {
             return res.status(400).json({ error: '2FA is not currently enabled' });
+        }
+
+        const passwordValid = await bcrypt.compare(current_password, rows[0].password);
+        if (!passwordValid) {
+            return res.status(403).json({ error: 'Incorrect current password' });
         }
 
         const verified = speakeasy.totp.verify({
@@ -144,7 +152,7 @@ router.post('/api/2fa/validate', totpLimiter, async (req, res) => {
 });
 
 // GET /api/2fa/status — Check if 2FA is enabled
-router.get('/api/2fa/status', auth, async (req, res) => {
+router.get('/api/2fa/status', auth, requireRole('reseller', 'owner'), async (req, res) => {
     try {
         const [rows] = await db.query('SELECT totp_enabled FROM resellers WHERE id = ?', [req.reseller.id]);
         res.json({ enabled: rows[0]?.totp_enabled === 1 });

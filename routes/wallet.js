@@ -2,12 +2,15 @@ const express = require('express');
 const router = express.Router();
 const db = require('../database/db');
 const auth = require('../middleware/auth');
+const { requireRole } = auth;
 const axios = require('axios');
 const LNbitsService = require('../services/lnbitsService');
 const BlinkService = require('../services/blinkService');
 const AlbyService = require('../services/albyService');
 const BinanceService = require('../services/binanceService');
 const TelegramService = require('../services/telegramService');
+
+router.use('/api/wallet*', auth, requireRole('reseller', 'owner'));
 
 // GET /api/wallet - retrieve all connected gateway configs and balances
 router.get('/api/wallet', auth, async (req, res) => {
@@ -105,170 +108,152 @@ router.post('/api/wallet/lnbits', auth, async (req, res) => {
 // POST /api/wallet/lnbits/test
 router.post('/api/wallet/lnbits/test', auth, async (req, res) => {
     try {
-        const { url, invoice_key } = req.body;
-        const targetUrl = url || req.reseller.lnbits_url || 'https://legend.lnbits.com';
-        const key = (invoice_key && !invoice_key.startsWith('***')) ? invoice_key.trim() : req.reseller.lnbits_invoice_key;
+        const { url, invoice_key, admin_key } = req.body;
+        const [rows] = await db.query('SELECT lnbits_url, lnbits_invoice_key, lnbits_admin_key FROM resellers WHERE id = ?', [req.reseller.id]);
+        const dbRow = rows[0] || {};
+
+        const targetUrl = url ? url.trim() : (dbRow.lnbits_url || 'https://legend.lnbits.com');
+        const key = (invoice_key && !invoice_key.startsWith('***')) ? invoice_key.trim() : dbRow.lnbits_invoice_key;
+
+        if (!key) {
+            return res.status(400).json({ error: 'Please enter your LNbits Invoice / Read Key to test connection.' });
+        }
 
         const details = await LNbitsService.getWalletDetails({ url: targetUrl, invoiceKey: key });
-        res.json({ success: true, data: details });
+
+        let adminStatus = 'Not Configured';
+        const targetAdminKey = (admin_key && !admin_key.startsWith('***')) ? admin_key.trim() : dbRow.lnbits_admin_key;
+        if (targetAdminKey) {
+            try {
+                await LNbitsService.getWalletDetails({ url: targetUrl, invoiceKey: targetAdminKey });
+                adminStatus = '✅ Valid (Outbound & Auto-Sweep Ready)';
+            } catch (aErr) {
+                adminStatus = '❌ Invalid or Read-Only';
+            }
+        }
+
+        res.json({
+            success: true,
+            message: `LNbits Connected: ${details.name}`,
+            data: {
+                ...details,
+                admin_status: adminStatus,
+                url: targetUrl
+            }
+        });
     } catch (err) {
         res.status(400).json({ error: 'LNbits Test Failed: ' + (err.response?.data?.message || err.message) });
     }
 });
 
-// POST /api/wallet/blink - save single or multi Blink API keys
-router.post('/api/wallet/blink', auth, async (req, res) => {
+// POST /api/wallet/alby - save Alby or NWC
+router.post('/api/wallet/alby', auth, async (req, res) => {
     try {
-        const { api_key, api_keys, wallet_id } = req.body;
-        
-        let poolKeys = [];
-        if (api_keys) {
-            poolKeys = BlinkService.parseApiKeys(api_key, api_keys);
-        } else if (api_key) {
-            const clean = api_key.startsWith('***') ? req.reseller.blink_api_key : api_key.trim();
-            if (clean) poolKeys.push(clean);
+        const { access_token, nwc_string } = req.body;
+        const [rows] = await db.query('SELECT alby_access_token, alby_nwc_string FROM resellers WHERE id = ?', [req.reseller.id]);
+        const dbRow = rows[0] || {};
+
+        const token = (access_token && !access_token.startsWith('***')) ? access_token.trim() : (dbRow.alby_access_token || null);
+        const nwc = (nwc_string && !nwc_string.startsWith('nostr+walletconnect://***')) ? nwc_string.trim() : (dbRow.alby_nwc_string || null);
+
+        if (!token && !nwc) {
+            return res.status(400).json({ error: 'Alby Access Token or NWC Connection String is required.' });
         }
 
-        if (!poolKeys.length && req.reseller.blink_api_keys) {
-            poolKeys = BlinkService.parseApiKeys(req.reseller.blink_api_key, req.reseller.blink_api_keys);
-        }
-
-        if (!poolKeys.length) return res.status(400).json({ error: 'At least one Blink API Key is required' });
-
-        // Test connection with first key in pool
-        const primaryKey = poolKeys[0];
-        const details = await BlinkService.getWalletDetails({ apiKey: primaryKey });
-        const finalWalletId = wallet_id ? wallet_id.trim() : details.wallet_id;
-
-        const jsonPool = JSON.stringify(poolKeys);
+        const details = await AlbyService.getAccountDetails({ accessToken: token, nwcString: nwc });
 
         await db.query(
-            `UPDATE resellers SET wallet_type = "blink", blink_api_key = ?, blink_api_keys = ?, blink_wallet_id = ? WHERE id = ?`,
-            [primaryKey, jsonPool, finalWalletId, req.reseller.id]
+            `UPDATE resellers SET wallet_type = 'alby', alby_access_token = ?, alby_nwc_string = ? WHERE id = ?`,
+            [token, nwc, req.reseller.id]
         );
 
         res.json({
             success: true,
-            message: `Blink Pool Connected (${poolKeys.length} key${poolKeys.length > 1 ? 's' : ''} in pool — ${details.username || details.wallet_id})`,
-            data: { ...details, key_count: poolKeys.length }
+            message: 'Alby / Nostr Wallet Connect saved successfully',
+            data: details
         });
     } catch (err) {
-        res.status(400).json({ error: 'Blink Connection Failed: ' + err.message });
+        res.status(400).json({ error: 'Alby / NWC Failed: ' + (err.response?.data?.message || err.message) });
     }
 });
 
-// POST /api/wallet/blink/test — Test Lightning Node Connection
-router.post('/api/wallet/blink/test', auth, async (req, res) => {
-    try {
-        const { api_key, api_keys } = req.body;
-        
-        // Fetch DB row to get actual unmasked stored keys if masked or empty
-        const [rows] = await db.query('SELECT blink_api_key, blink_api_keys FROM resellers WHERE id = ?', [req.reseller.id]);
-        const dbRow = rows[0] || {};
-
-        let poolKeys = [];
-        if (api_keys) {
-            poolKeys = BlinkService.parseApiKeys(api_key, api_keys);
-        } else if (api_key && !api_key.startsWith('***')) {
-            poolKeys.push(api_key.trim());
-        }
-
-        if (!poolKeys.length && dbRow.blink_api_keys) {
-            poolKeys = BlinkService.parseApiKeys(dbRow.blink_api_key, dbRow.blink_api_keys);
-        } else if (!poolKeys.length && dbRow.blink_api_key) {
-            poolKeys.push(dbRow.blink_api_key);
-        }
-
-        if (!poolKeys.length) {
-            return res.status(400).json({ error: 'Please enter at least one Gateway API Key to test connection' });
-        }
-
-        const primaryKey = poolKeys[0];
-        const details = await BlinkService.getWalletDetails({ apiKey: primaryKey });
-        res.json({ success: true, data: { ...details, key_count: poolKeys.length } });
-    } catch (err) {
-        res.status(400).json({ error: 'Lightning Engine Connection Failed: ' + err.message });
-    }
-});
-
-// POST /api/wallet/alby - save Alby / NWC
-router.post('/api/wallet/alby', auth, async (req, res) => {
-    try {
-        const { access_token, nwc_string } = req.body;
-        if (!access_token && !nwc_string) {
-            return res.status(400).json({ error: 'Alby Access Token or NWC connection string required' });
-        }
-
-        const cleanToken = (access_token && !access_token.startsWith('***')) ? access_token.trim() : req.reseller.alby_access_token;
-        const cleanNwc = (nwc_string && !nwc_string.startsWith('***')) ? nwc_string.trim() : req.reseller.alby_nwc_string;
-
-        const details = await AlbyService.getAccountDetails({
-            accessToken: cleanToken,
-            nwcString: cleanNwc
-        });
-
-        await db.query(
-            `UPDATE resellers SET wallet_type = "alby", alby_access_token = ?, alby_nwc_string = ? WHERE id = ?`,
-            [cleanToken, cleanNwc, req.reseller.id]
-        );
-
-        res.json({ success: true, message: 'Alby wallet connected successfully', data: details });
-    } catch (err) {
-        res.status(400).json({ error: 'Alby Connection Failed: ' + err.message });
-    }
-});
-
-// POST /api/wallet/alby/test
+// POST /api/wallet/alby/test - test Alby or NWC
 router.post('/api/wallet/alby/test', auth, async (req, res) => {
     try {
         const { access_token, nwc_string } = req.body;
-        const token = (access_token && !access_token.startsWith('***')) ? access_token.trim() : req.reseller.alby_access_token;
-        const nwc = (nwc_string && !nwc_string.startsWith('***')) ? nwc_string.trim() : req.reseller.alby_nwc_string;
+        const [rows] = await db.query('SELECT alby_access_token, alby_nwc_string FROM resellers WHERE id = ?', [req.reseller.id]);
+        const dbRow = rows[0] || {};
+
+        const token = (access_token && !access_token.startsWith('***')) ? access_token.trim() : (dbRow.alby_access_token || null);
+        const nwc = (nwc_string && !nwc_string.startsWith('nostr+walletconnect://***')) ? nwc_string.trim() : (dbRow.alby_nwc_string || null);
+
+        if (!token && !nwc) {
+            return res.status(400).json({ error: 'Please enter your Alby Access Token or NWC Connection String.' });
+        }
 
         const details = await AlbyService.getAccountDetails({ accessToken: token, nwcString: nwc });
-        res.json({ success: true, data: details });
+
+        res.json({
+            success: true,
+            message: 'Alby / NWC Connected',
+            data: details
+        });
     } catch (err) {
-        res.status(400).json({ error: 'Alby Test Failed: ' + err.message });
+        res.status(400).json({ error: 'Alby / NWC Test Failed: ' + (err.response?.data?.message || err.message) });
     }
 });
 
-// POST /api/wallet/opennode
-router.post('/api/wallet/opennode', auth, async (req, res) => {
+// POST /api/wallet/opennode/test
+router.post('/api/wallet/opennode/test', auth, async (req, res) => {
     try {
         const { api_key, env } = req.body;
-        if (!api_key) return res.status(400).json({ error: 'API key required' });
+        const [rows] = await db.query('SELECT opennode_api_key, opennode_env FROM resellers WHERE id = ?', [req.reseller.id]);
+        const dbRow = rows[0] || {};
 
-        const baseUrl = env === 'dev' ? 'https://dev-api.opennode.com' : 'https://api.opennode.com';
-        await axios.get(`${baseUrl}/v1/account/payment/summary`, {
-            headers: { Authorization: api_key.trim() },
-            timeout: 5000
+        const key = (api_key && !api_key.startsWith('***')) ? api_key.trim() : dbRow.opennode_api_key;
+        const environment = env || dbRow.opennode_env || 'live';
+
+        if (!key) return res.status(400).json({ error: 'OpenNode API key is required to test.' });
+
+        const baseUrl = environment === 'dev' ? 'https://dev-api.opennode.com' : 'https://api.opennode.com';
+        const resp = await axios.get(`${baseUrl}/v1/account/payment/summary`, {
+            headers: { Authorization: key },
+            timeout: 7000
         });
 
-        await db.query(
-            'UPDATE resellers SET wallet_type = "opennode", opennode_api_key = ?, opennode_env = ? WHERE id = ?',
-            [api_key.trim(), env || 'live', req.reseller.id]
-        );
-
-        res.json({ success: true, message: 'OpenNode API connected' });
+        res.json({ success: true, message: 'OpenNode API Connected Successfully', data: resp.data?.data || {} });
     } catch (e) {
-        res.status(400).json({ error: 'OpenNode API key invalid or unreachable' });
+        res.status(400).json({ error: 'OpenNode Test Failed: ' + (e.response?.data?.message || e.message) });
     }
 });
 
-// POST /api/wallet/btcpay
-router.post('/api/wallet/btcpay', auth, async (req, res) => {
+// POST /api/wallet/btcpay/test
+router.post('/api/wallet/btcpay/test', auth, async (req, res) => {
     try {
-        const { url, store_id, api_key, webhook_id, webhook_secret } = req.body;
-        if (!url || !store_id || !api_key) return res.status(400).json({ error: 'URL, Store ID and API key required' });
+        const { url, store_id, api_key } = req.body;
+        const [rows] = await db.query('SELECT btcpay_url, btcpay_store_id, btcpay_api_key FROM resellers WHERE id = ?', [req.reseller.id]);
+        const dbRow = rows[0] || {};
 
-        await db.query(
-            'UPDATE resellers SET wallet_type = "btcpay", btcpay_url = ?, btcpay_store_id = ?, btcpay_api_key = ?, btcpay_webhook_id = ?, btcpay_webhook_secret = ? WHERE id = ?',
-            [url.trim(), store_id.trim(), api_key.trim(), webhook_id || null, webhook_secret || null, req.reseller.id]
-        );
+        const targetUrl = url ? url.trim().replace(/\/+$/, '') : (dbRow.btcpay_url || '');
+        const storeId = store_id ? store_id.trim() : (dbRow.btcpay_store_id || '');
+        const key = (api_key && !api_key.startsWith('***')) ? api_key.trim() : (dbRow.btcpay_api_key || '');
 
-        res.json({ success: true, message: 'BTCPay Server saved' });
+        if (!targetUrl || !storeId || !key) {
+            return res.status(400).json({ error: 'BTCPay Server URL, Store ID, and API Key are required to test.' });
+        }
+
+        const resp = await axios.get(`${targetUrl}/api/v1/stores/${storeId}`, {
+            headers: { Authorization: `token ${key}` },
+            timeout: 7000
+        });
+
+        res.json({
+            success: true,
+            store: resp.data?.name || storeId,
+            data: resp.data
+        });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(400).json({ error: 'BTCPay Test Failed: ' + (err.response?.data?.message || err.message) });
     }
 });
 

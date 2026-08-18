@@ -275,21 +275,57 @@ function selectProvider(type) {
     }
 }
 
+// Helper to render inline test output boxes
+function renderTestResult(containerId, success, message) {
+    const el = document.getElementById(containerId);
+    if (!el) return;
+    el.style.display = 'block';
+    if (success) {
+        el.style.background = 'rgba(0, 214, 50, 0.12)';
+        el.style.border = '1px solid rgba(0, 214, 50, 0.35)';
+        el.style.color = '#00d632';
+        el.innerHTML = `✅ <strong>Connected:</strong> ${message}`;
+    } else {
+        el.style.background = 'rgba(255, 71, 87, 0.12)';
+        el.style.border = '1px solid rgba(255, 71, 87, 0.35)';
+        el.style.color = '#ff4757';
+        el.innerHTML = `❌ <strong>Failed:</strong> ${message}`;
+    }
+}
+
 // LNbits
 async function testLnbits(e) {
     e.stopPropagation();
+    const btn = e.target;
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Testing...';
+
     const url = document.getElementById('lnbitsUrl').value;
     const invoice_key = document.getElementById('lnbitsInvoiceKey').value;
+    const admin_key = document.getElementById('lnbitsAdminKey')?.value || '';
     try {
-        const resp = await apiFetch('/api/wallet/lnbits/test', 'POST', { url, invoice_key });
-        showToast(`✅ LNbits Connected: ${resp.data.name} (${resp.data.balance_sats.toLocaleString()} sats)`, 'success');
+        const resp = await apiFetch('/api/wallet/lnbits/test', 'POST', { url, invoice_key, admin_key });
+        const adminInfo = resp.data.admin_status ? ` | Admin Key: ${resp.data.admin_status}` : '';
+        const msg = `${resp.data.name} (Balance: ${resp.data.balance_sats.toLocaleString()} sats)${adminInfo}`;
+        renderTestResult('lnbitsTestOutput', true, msg);
+        showToast(`✅ LNbits Connected: ${msg}`, 'success');
     } catch(err) {
+        renderTestResult('lnbitsTestOutput', false, err.message);
         showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
     }
 }
 
 async function saveLnbits(e) {
     e.stopPropagation();
+    const btn = e.target;
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+
     const body = {
         url: document.getElementById('lnbitsUrl').value,
         invoice_key: document.getElementById('lnbitsInvoiceKey').value,
@@ -301,26 +337,45 @@ async function saveLnbits(e) {
         loadWallet();
     } catch(err) {
         showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
     }
 }
 
 // Lightning Node Pool (White-Labeled)
 async function testBlink(e) {
     e.stopPropagation();
+    const btn = e.target;
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Testing Node...';
+
     const api_key = document.getElementById('blinkApiKey').value;
     const api_keys = document.getElementById('blinkApiKeys')?.value || '';
     try {
         const resp = await apiFetch('/api/wallet/blink/test', 'POST', { api_key, api_keys });
         if (resp.data.wallet_id) document.getElementById('blinkWalletId').value = resp.data.wallet_id;
         const keyInfo = resp.data.key_count > 1 ? ` (${resp.data.key_count} keys in pool)` : '';
-        showToast(`✅ Lightning Node Engine Connected${keyInfo}: (${resp.data.balance_sats.toLocaleString()} sats)`, 'success');
+        const msg = `Pool Active${keyInfo} | Balance: ${resp.data.balance_sats.toLocaleString()} sats`;
+        renderTestResult('blinkTestOutput', true, msg);
+        showToast(`✅ Lightning Node Engine Connected: ${msg}`, 'success');
     } catch(err) {
+        renderTestResult('blinkTestOutput', false, err.message);
         showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
     }
 }
 
 async function saveBlink(e) {
     e.stopPropagation();
+    const btn = e.target;
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Connecting...';
+
     const body = {
         api_key: document.getElementById('blinkApiKey').value,
         api_keys: document.getElementById('blinkApiKeys')?.value || '',
@@ -333,24 +388,43 @@ async function saveBlink(e) {
         loadWallet();
     } catch(err) {
         showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
     }
 }
 
 // Alby
 async function testAlby(e) {
     e.stopPropagation();
+    const btn = e.target;
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Testing...';
+
     const access_token = document.getElementById('albyAccessToken').value;
     const nwc_string = document.getElementById('albyNwcString').value;
     try {
         const resp = await apiFetch('/api/wallet/alby/test', 'POST', { access_token, nwc_string });
-        showToast(`✅ Alby Connected: ${resp.data.lightning_address || 'Wallet'} (${resp.data.balance_sats} sats)`, 'success');
+        const msg = `${resp.data.lightning_address || 'Wallet'} (Balance: ${resp.data.balance_sats} sats)`;
+        renderTestResult('albyTestOutput', true, msg);
+        showToast(`✅ Alby Connected: ${msg}`, 'success');
     } catch(err) {
+        renderTestResult('albyTestOutput', false, err.message);
         showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
     }
 }
 
 async function saveAlby(e) {
     e.stopPropagation();
+    const btn = e.target;
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+
     const body = {
         access_token: document.getElementById('albyAccessToken').value,
         nwc_string: document.getElementById('albyNwcString').value
@@ -361,6 +435,9 @@ async function saveAlby(e) {
         loadWallet();
     } catch(err) {
         showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
     }
 }
 
@@ -384,6 +461,29 @@ async function saveEmailWallet(e) {
 }
 
 // OpenNode
+async function testOpennode(e) {
+    e.stopPropagation();
+    const btn = e.target;
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Testing...';
+
+    const api_key = document.getElementById('opennodeKey').value;
+    const env = document.getElementById('opennodeEnv').value;
+    try {
+        const resp = await apiFetch('/api/wallet/opennode/test', 'POST', { api_key, env });
+        const msg = 'OpenNode Live API Verified & Outbound Ready!';
+        renderTestResult('opennodeTestOutput', true, msg);
+        showToast(`✅ ${msg}`, 'success');
+    } catch(err) {
+        renderTestResult('opennodeTestOutput', false, err.message);
+        showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
+    }
+}
+
 async function saveOpennode(e) {
     e.stopPropagation();
     const api_key = document.getElementById('opennodeKey').value;
@@ -404,19 +504,35 @@ async function saveOpennode(e) {
 // BTCPay
 async function testBtcpay(e) {
     e.stopPropagation();
+    const btn = e.target;
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Testing...';
+
     const url = document.getElementById('btcpayUrl').value;
     const store_id = document.getElementById('btcpayStoreId').value;
     const api_key = document.getElementById('btcpayKey').value;
     try {
         const resp = await apiFetch('/api/wallet/btcpay/test', 'POST', { url, store_id, api_key });
-        showToast('✅ Connected to store: ' + resp.store, 'success');
+        const msg = 'Connected to BTCPay Store: ' + (resp.store || 'Active');
+        renderTestResult('btcpayTestOutput', true, msg);
+        showToast('✅ ' + msg, 'success');
     } catch(err) {
+        renderTestResult('btcpayTestOutput', false, err.message);
         showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
     }
 }
 
 async function saveBtcpay(e) {
     e.stopPropagation();
+    const btn = e.target;
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+
     const body = {
         url: document.getElementById('btcpayUrl').value,
         store_id: document.getElementById('btcpayStoreId').value,
@@ -430,6 +546,9 @@ async function saveBtcpay(e) {
         loadWallet();
     } catch(err) {
         showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = origText;
     }
 }
 
@@ -647,10 +766,26 @@ function selectTheme(key, el) {
 }
 
 // ─── LINKS ────────────────────────────────────────────────────
+let allSubUsers = [];
+
 async function loadLinks() {
     try {
-        allLinks = await apiFetch('/api/links');
+        const [links, users] = await Promise.all([
+            apiFetch('/api/links'),
+            apiFetch('/api/users').catch(() => [])
+        ]);
+        allLinks = links;
+        allSubUsers = users;
         renderLinks(allLinks);
+
+        // Populate sub-user dropdown in Create Link form
+        const subUserSelect = document.getElementById('newSubUser');
+        if (subUserSelect) {
+            subUserSelect.innerHTML = '<option value="">-- None (Reseller Master Account) --</option>' +
+                allSubUsers.filter(u => u.status === 'active').map(u => `
+                    <option value="${u.id}">${u.name} (${u.email})</option>
+                `).join('');
+        }
 
         const active = allLinks.filter(l => l.status === 'active').length;
         const clicks = allLinks.reduce((s, l) => s + l.clicks, 0);
@@ -675,7 +810,9 @@ function renderLinks(links) {
             <a href="/pay/${l.slug}" target="_blank" class="text-accent font-mono">/${l.slug}</a>
             <div style="font-size:11px;color:var(--text-muted)">${l.title}</div>
           </td>
-          <td>${l.owner_name || 'Reseller'}</td>
+          <td>
+            <span class="badge ${l.sub_user_id ? 'badge-blue' : 'badge-purple'}">${l.owner_name || 'Reseller'}</span>
+          </td>
           <td><span class="badge badge-purple">${l.theme}</span></td>
           <td>${l.amount_type === 'fixed' ? '$' + l.fixed_amount : 'Open ($' + l.min_amount + '—$' + l.max_amount + ')'}</td>
           <td>${l.clicks}</td>
@@ -683,6 +820,7 @@ function renderLinks(links) {
           <td>${statusBadge(l.status)}</td>
           <td>
             <div class="flex gap-8">
+              <button class="btn btn-sm btn-ghost" onclick="openAssignModal(${l.id}, '${l.slug}', ${l.sub_user_id || 'null'})" title="Assign to Merchant / User">👤 Assign</button>
               <button class="btn btn-sm btn-ghost" onclick="copyLink('${l.slug}')" title="Copy">📋</button>
               <button class="btn btn-sm ${l.status === 'active' ? 'btn-outline-red' : 'btn-outline-green'}" onclick="toggleLink(${l.id})">${l.status === 'active' ? 'Disable' : 'Enable'}</button>
               <button class="btn btn-sm btn-danger" onclick="deleteLink(${l.id})">🗑</button>
@@ -692,13 +830,52 @@ function renderLinks(links) {
     `).join('');
 }
 
+function openAssignModal(linkId, slug, currentSubUserId) {
+    const options = [
+        `<option value="" ${!currentSubUserId ? 'selected' : ''}>-- Reseller Master Account --</option>`,
+        ...allSubUsers.map(u => `<option value="${u.id}" ${currentSubUserId === u.id ? 'selected' : ''}>${u.name} (${u.email})</option>`)
+    ].join('');
+
+    const html = `
+        <div class="form-group mb-16">
+            <label class="form-label">Payment Link: <strong class="text-accent">/${slug}</strong></label>
+            <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Choose which Sub-User (Merchant) owns and manages this payment link:</p>
+            <select class="form-control" id="assignSubUserId">
+                ${options}
+            </select>
+        </div>
+        <div class="flex gap-8 justify-end">
+            <button class="btn btn-primary" onclick="saveAssignLink(${linkId})">Save Assignment</button>
+            <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+        </div>
+    `;
+    openModal('👤 Assign Payment Link to User', html);
+}
+
+async function saveAssignLink(linkId) {
+    const subUserId = document.getElementById('assignSubUserId').value;
+    try {
+        await apiFetch(`/api/links/${linkId}/assign`, 'PUT', { sub_user_id: subUserId });
+        showToast('✅ Link assigned successfully!', 'success');
+        closeModal();
+        loadLinks();
+    } catch(err) {
+        showToast(err.message, 'error');
+    }
+}
+
 function filterLinks() {
     const q = document.getElementById('linksSearch').value.toLowerCase();
     renderLinks(allLinks.filter(l => l.slug.includes(q) || l.title.toLowerCase().includes(q)));
 }
 
 function toggleCreateForm() {
-    document.getElementById('createLinkForm').classList.toggle('d-none');
+    const form = document.getElementById('createLinkForm');
+    form.classList.toggle('d-none');
+    const domainInput = document.getElementById('newDomain');
+    if (domainInput && (!domainInput.value || domainInput.value === 'localhost:3000')) {
+        domainInput.value = window.location.host;
+    }
 }
 
 function previewSlug() {
@@ -717,11 +894,13 @@ async function createLink() {
     formData.append('slug', document.getElementById('newSlug').value);
     formData.append('title', document.getElementById('newTitle').value);
     formData.append('brand_name', document.getElementById('newBrand').value);
-    formData.append('domain', document.getElementById('newDomain').value);
+    formData.append('domain', document.getElementById('newDomain').value.trim() || window.location.host);
     formData.append('theme', selectedTheme);
     formData.append('amount_type', document.getElementById('newAmountType').value);
     formData.append('min_amount', document.getElementById('newMin').value);
     formData.append('max_amount', document.getElementById('newMax').value);
+    const subUserVal = document.getElementById('newSubUser')?.value;
+    if (subUserVal) formData.append('sub_user_id', subUserVal);
     if (document.getElementById('newAmountType').value === 'fixed') {
         formData.append('fixed_amount', document.getElementById('newFixed').value);
     }
@@ -757,9 +936,33 @@ async function deleteLink(id) {
     } catch(err) { showToast(err.message, 'error'); }
 }
 
+function copyToClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+    } else {
+        fallbackCopy(text);
+    }
+}
+
+function fallbackCopy(text) {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-999999px';
+    textArea.style.top = '-999999px';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try {
+        document.execCommand('copy');
+    } catch (err) {}
+    document.body.removeChild(textArea);
+}
+
 function copyLink(slug) {
-    navigator.clipboard.writeText(`${location.origin}/pay/${slug}`);
-    showToast('Link copied!', 'success');
+    const url = `${location.origin}/pay/${slug}`;
+    copyToClipboard(url);
+    showToast('📋 Link copied to clipboard!', 'success');
 }
 
 // ─── SCAN CODES ───────────────────────────────────────────────
@@ -1110,15 +1313,21 @@ async function disableTotp() {
 }
 
 async function changePassword() {
+    const currentPassEl = document.getElementById('currentPass');
+    const newPassEl = document.getElementById('newPass');
+    const confirmPassEl = document.getElementById('confirmPass');
+
     const body = {
-        new_password: document.getElementById('newPass').value,
-        confirm_password: document.getElementById('confirmPass').value
+        current_password: currentPassEl ? currentPassEl.value : '',
+        new_password: newPassEl ? newPassEl.value : '',
+        confirm_password: confirmPassEl ? confirmPassEl.value : ''
     };
     try {
         await apiFetch('/api/security/password', 'POST', body);
         showToast('✅ Password updated!', 'success');
-        document.getElementById('newPass').value = '';
-        document.getElementById('confirmPass').value = '';
+        if (currentPassEl) currentPassEl.value = '';
+        if (newPassEl) newPassEl.value = '';
+        if (confirmPassEl) confirmPassEl.value = '';
     } catch(err) { showToast(err.message, 'error'); }
 }
 
@@ -1260,13 +1469,24 @@ function showToast(message, type = 'info') {
 async function apiFetch(url, method = 'GET', body = null) {
     const opts = {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         credentials: 'include'
     };
     if (body) opts.body = JSON.stringify(body);
     const resp = await fetch(url, opts);
+    const contentType = resp.headers.get('content-type') || '';
+
+    if (!contentType.includes('application/json')) {
+        if (resp.status === 401 || resp.status === 403 || resp.redirected) {
+            window.location.href = '/login.html';
+            throw new Error('Session expired. Please log in again.');
+        }
+        const text = await resp.text();
+        throw new Error(`Server error (${resp.status}): ${text.substring(0, 80)}`);
+    }
+
     const data = await resp.json();
-    if (!resp.ok) throw new Error(data.error || 'Request failed');
+    if (!resp.ok) throw new Error(data.error || data.message || 'Request failed');
     return data;
 }
 

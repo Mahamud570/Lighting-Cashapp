@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Integration Tests: routes/links.js
  * Covers: file type filter (S-005), reserved slug (new), slug collision,
  *         title/brand_name max length sanitization.
@@ -16,6 +16,7 @@ auth.mockImplementation((req, res, next) => {
     req.reseller = { id: 1, username: 'alice' };
     next();
 });
+auth.requireRole = () => (req, res, next) => next();
 
 const linksRouter = require('../../routes/links');
 const app = express();

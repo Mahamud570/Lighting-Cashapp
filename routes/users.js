@@ -2,7 +2,10 @@ const express = require('express');
 const router = express.Router();
 const db = require('../database/db');
 const auth = require('../middleware/auth');
+const { requireRole } = auth;
 const bcrypt = require('bcryptjs');
+
+router.use('/api/users', auth, requireRole('reseller', 'owner'));
 
 // GET /api/users
 router.get('/api/users', auth, async (req, res) => {
@@ -38,11 +41,11 @@ router.post('/api/users', auth, async (req, res) => {
 
         const hash = await bcrypt.hash(password, 12);
         await db.query(
-            'INSERT INTO sub_users (reseller_id, name, email, password, plain_password, rate_per_dollar, charge_mode, charge_value) VALUES (?,?,?,?,?,?,?,?)',
-            [req.reseller.id, name, email, hash, password, rate || 1, charge_mode || 'inherit', charge_value || 0]
+            'INSERT INTO sub_users (reseller_id, name, email, password, rate_per_dollar, charge_mode, charge_value, must_change_password) VALUES (?,?,?,?,?,?,?,1)',
+            [req.reseller.id, name, email, hash, rate || 1, charge_mode || 'inherit', charge_value || 0]
         );
 
-        res.json({ success: true });
+        res.json({ success: true, temporary_password: password });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

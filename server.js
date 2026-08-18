@@ -12,6 +12,10 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
+// Trust the first proxy hop (cPanel/Passenger reverse proxy)
+// Required for express-rate-limit to correctly read X-Forwarded-For
+app.set('trust proxy', 1);
+
 // Share io instance with Express routers
 app.set('io', io);
 
@@ -19,6 +23,14 @@ app.set('io', io);
 const { invoiceLimiter, pollLimiter, apiLimiter } = require('./middleware/rateLimiter');
 
 // Middleware
+app.use((req, res, next) => {
+    const proto = req.headers['x-forwarded-proto'];
+    if (proto && proto === 'http' && req.headers.host && !req.headers.host.includes('localhost') && !req.headers.host.includes('127.0.0.1')) {
+        return res.redirect(301, `https://${req.headers.host}${req.url}`);
+    }
+    next();
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -64,38 +76,77 @@ app.get('/api/me', auth, (req, res) => {
 
 // Boss / Master Panel SPA
 app.get('/owner*', auth, requireRole('owner'), (req, res) => {
-    res.sendFile('owner.html', { root: './public' });
+    res.sendFile('owner.html', { root: path.join(__dirname, 'public') });
 });
 
 // Merchant / Sub-User Panel SPA
-app.get('/subuser*', auth, (req, res) => {
-    res.sendFile('subuser.html', { root: './public' });
+app.get('/subuser*', auth, requireRole('sub_user'), (req, res) => {
+    res.sendFile('subuser.html', { root: path.join(__dirname, 'public') });
 });
 
 // Reseller Dashboard SPA
-app.get('/reseller*', auth, (req, res) => {
-    res.sendFile('app.html', { root: './public' });
+app.get('/reseller*', auth, requireRole('reseller', 'owner'), (req, res) => {
+    res.sendFile('app.html', { root: path.join(__dirname, 'public') });
+});
+
+// Force Password Change Page
+app.get('/force-password-change', auth, (req, res) => {
+    const mustChange = req.sub_user ? req.sub_user.must_change_password : req.reseller.must_change_password;
+    if (mustChange !== 1) return res.redirect('/');
+    res.sendFile('force-password-change.html', { root: path.join(__dirname, 'public') });
 });
 
 // Root redirect based on role (or fallback to /login)
 app.get('/', (req, res) => {
-    if (req.cookies?.auth_token) return res.redirect('/reseller');
-    res.redirect('/login');
+    const token = req.cookies?.auth_token;
+    if (!token) return res.redirect('/login');
+    try {
+        const jwtSecret = process.env.JWT_SECRET || 'lightning_pay_production_jwt_secret_key_2026_x99';
+        const decoded = require('jsonwebtoken').verify(token, jwtSecret);
+        const role = decoded.role;
+        if (role === 'owner') return res.redirect('/owner');
+        if (role === 'sub_user') return res.redirect('/subuser');
+        return res.redirect('/reseller');
+    } catch (err) {
+        res.clearCookie('auth_token');
+        return res.redirect('/login');
+    }
 });
 
 // 404
 app.use((req, res) => {
-    res.status(404).sendFile('404.html', { root: './public' });
+    res.status(404).sendFile('404.html', { root: path.join(__dirname, 'public') });
 });
 
-// Socket.io - real-time payment updates
-const db = require('./database/db');
+// Socket.io - real-time payment updates with auth & authorization
+const jwt = require('jsonwebtoken');
+io.use((socket, next) => {
+    const cookieHeader = socket.handshake.headers?.cookie || '';
+    let token = null;
+    const match = cookieHeader.match(/auth_token=([^;]+)/);
+    if (match) token = match[1];
+    if (!token && socket.handshake.auth?.token) token = socket.handshake.auth.token;
+
+    if (token) {
+        try {
+            const jwtSecret = process.env.JWT_SECRET || 'lightning_pay_production_jwt_secret_key_2026_x99';
+            socket.user = jwt.verify(token, jwtSecret);
+        } catch (_) {}
+    }
+    next();
+});
+
 io.on('connection', (socket) => {
     socket.on('subscribe:reseller', (resellerId) => {
-        socket.join(`reseller:${resellerId}`);
+        const reqId = parseInt(resellerId, 10);
+        if (socket.user && (socket.user.id === reqId || socket.user.reseller_id === reqId || socket.user.role === 'owner')) {
+            socket.join(`reseller:${resellerId}`);
+        }
     });
     socket.on('subscribe:payment', (paymentId) => {
-        socket.join(`payment:${paymentId}`);
+        if (paymentId) {
+            socket.join(`payment:${paymentId}`);
+        }
     });
 });
 

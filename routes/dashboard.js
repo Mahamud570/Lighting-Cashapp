@@ -7,12 +7,19 @@ const auth = require('../middleware/auth');
 router.get('/api/dashboard/stats', auth, async (req, res) => {
     try {
         const rid = req.reseller.id;
+        const isSubUser = req.role === 'sub_user';
+        const subUserId = isSubUser ? req.sub_user.id : null;
 
-        const [linksRows] = await db.query('SELECT COUNT(*) as count FROM payment_links WHERE reseller_id = ?', [rid]);
-        const [clicksRows] = await db.query('SELECT COALESCE(SUM(clicks),0) as total FROM payment_links WHERE reseller_id = ?', [rid]);
-        const [paidRows] = await db.query('SELECT COALESCE(SUM(total_usd),0) as total FROM payments WHERE reseller_id = ? AND status="paid"', [rid]);
-        const [pendingRows] = await db.query('SELECT COUNT(*) as count FROM payments WHERE reseller_id = ? AND status="pending"', [rid]);
-        const [expiredRows] = await db.query('SELECT COUNT(*) as count FROM payments WHERE reseller_id = ? AND status="expired"', [rid]);
+        const subClause = isSubUser ? ' AND sub_user_id = ?' : '';
+        const plSubClause = isSubUser ? ' AND pl.sub_user_id = ?' : '';
+        const pSubClause = isSubUser ? ' AND p.sub_user_id = ?' : '';
+        const params = isSubUser ? [rid, subUserId] : [rid];
+
+        const [linksRows] = await db.query(`SELECT COUNT(*) as count FROM payment_links WHERE reseller_id = ?${subClause}`, params);
+        const [clicksRows] = await db.query(`SELECT COALESCE(SUM(clicks),0) as total FROM payment_links WHERE reseller_id = ?${subClause}`, params);
+        const [paidRows] = await db.query(`SELECT COALESCE(SUM(total_usd),0) as total FROM payments WHERE reseller_id = ?${subClause} AND status="paid"`, params);
+        const [pendingRows] = await db.query(`SELECT COUNT(*) as count FROM payments WHERE reseller_id = ?${subClause} AND status="pending"`, params);
+        const [expiredRows] = await db.query(`SELECT COUNT(*) as count FROM payments WHERE reseller_id = ?${subClause} AND status="expired"`, params);
 
         const links = linksRows[0] || { count: 0 };
         const clicks = clicksRows[0] || { total: 0 };
@@ -21,37 +28,37 @@ router.get('/api/dashboard/stats', auth, async (req, res) => {
         const expired = expiredRows[0] || { count: 0 };
 
         const [paid7dRows] = await db.query(
-            "SELECT COALESCE(SUM(total_usd),0) as total FROM payments WHERE reseller_id = ? AND status='paid' AND paid_at >= datetime('now', '-7 days')",
-            [rid]
+            `SELECT COALESCE(SUM(total_usd),0) as total FROM payments WHERE reseller_id = ?${subClause} AND status='paid' AND paid_at >= datetime('now', '-7 days')`,
+            params
         );
         const [paid30dRows] = await db.query(
-            "SELECT COALESCE(SUM(total_usd),0) as total FROM payments WHERE reseller_id = ? AND status='paid' AND paid_at >= datetime('now', '-30 days')",
-            [rid]
+            `SELECT COALESCE(SUM(total_usd),0) as total FROM payments WHERE reseller_id = ?${subClause} AND status='paid' AND paid_at >= datetime('now', '-30 days')`,
+            params
         );
         const paid7d = paid7dRows[0] || { total: 0 };
         const paid30d = paid30dRows[0] || { total: 0 };
 
         // Conversion rate
-        const [totalInvRows] = await db.query('SELECT COUNT(*) as count FROM payments WHERE reseller_id = ?', [rid]);
+        const [totalInvRows] = await db.query(`SELECT COUNT(*) as count FROM payments WHERE reseller_id = ?${subClause}`, params);
         const totalInvoices = totalInvRows[0] || { count: 0 };
         const conversion = totalInvoices.count > 0 ? Math.round((paid.total / totalInvoices.count) * 100) : 0;
 
         // Top links
         const [topLinks] = await db.query(
-            'SELECT slug, title, fixed_amount, clicks, (SELECT COUNT(*) FROM payments p WHERE p.link_id = pl.id) as invoices, status FROM payment_links pl WHERE pl.reseller_id = ? ORDER BY clicks DESC LIMIT 5',
-            [rid]
+            `SELECT slug, title, fixed_amount, clicks, (SELECT COUNT(*) FROM payments p WHERE p.link_id = pl.id) as invoices, status FROM payment_links pl WHERE pl.reseller_id = ?${plSubClause} ORDER BY clicks DESC LIMIT 5`,
+            params
         );
 
         // Recent payments
         const [recentPayments] = await db.query(
-            'SELECT p.*, pl.slug, pl.title FROM payments p LEFT JOIN payment_links pl ON p.link_id = pl.id WHERE p.reseller_id = ? ORDER BY p.created_at DESC LIMIT 10',
-            [rid]
+            `SELECT p.*, pl.slug, pl.title FROM payments p LEFT JOIN payment_links pl ON p.link_id = pl.id WHERE p.reseller_id = ?${pSubClause} ORDER BY p.created_at DESC LIMIT 10`,
+            params
         );
 
         // Recent clicks
         const [recentClicks] = await db.query(
-            'SELECT lc.*, pl.slug FROM link_clicks lc LEFT JOIN payment_links pl ON lc.link_id = pl.id WHERE pl.reseller_id = ? ORDER BY lc.clicked_at DESC LIMIT 10',
-            [rid]
+            `SELECT lc.*, pl.slug FROM link_clicks lc LEFT JOIN payment_links pl ON lc.link_id = pl.id WHERE pl.reseller_id = ?${plSubClause} ORDER BY lc.clicked_at DESC LIMIT 10`,
+            params
         );
 
         // Wallet status

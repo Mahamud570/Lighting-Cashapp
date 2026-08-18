@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const db = require('../database/db');
 const auth = require('../middleware/auth');
+const { requireRole } = auth;
+
+router.use('/api/analytics*', auth, requireRole('reseller', 'owner'));
 
 /**
  * Analytics API Routes

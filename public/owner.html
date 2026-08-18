@@ -306,11 +306,9 @@
                         <td><strong>${r.username}</strong></td>
                         <td>${r.email}</td>
                         <td>
-                            <span class="pwd-cell">
-                                <span id="rPwdVal_${r.id}" data-real="${r.plain_password || ''}">••••••••</span>
-                                <i class="fa-solid fa-eye pwd-toggle" onclick="togglePwdVisibility('rPwdVal_${r.id}')" title="Show/Hide Password"></i>
-                                <i class="fa-solid fa-copy pwd-toggle" onclick="copyText('${r.plain_password || ''}')" title="Copy Password"></i>
-                            </span>
+                            <button class="btn btn-secondary" style="padding:0.25rem 0.6rem;font-size:0.8rem;" onclick="resetResellerPassword(${r.id}, '${r.username}')">
+                                <i class="fa-solid fa-key"></i> Reset Password
+                            </button>
                         </td>
                         <td><span class="badge badge-active">${(r.wallet_type || 'NOT SET').toUpperCase()}</span></td>
                         <td>${r.sub_user_count} merchants</td>
@@ -345,11 +343,9 @@
                         <td>${su.email}</td>
                         <td><span class="badge badge-active"><i class="fa-solid fa-crown"></i> ${su.reseller_username}</span></td>
                         <td>
-                            <span class="pwd-cell">
-                                <span id="suPwdVal_${su.id}" data-real="${su.plain_password || ''}">••••••••</span>
-                                <i class="fa-solid fa-eye pwd-toggle" onclick="togglePwdVisibility('suPwdVal_${su.id}')" title="Show/Hide Password"></i>
-                                <i class="fa-solid fa-copy pwd-toggle" onclick="copyText('${su.plain_password || ''}')" title="Copy Password"></i>
-                            </span>
+                            <button class="btn btn-secondary" style="padding:0.25rem 0.6rem;font-size:0.8rem;" onclick="resetSubUserPassword(${su.id}, '${su.name}')">
+                                <i class="fa-solid fa-key"></i> Reset Password
+                            </button>
                         </td>
                         <td>${su.rate_per_dollar || 1.0}x</td>
                         <td style="color:var(--text-muted); font-size:0.8rem;">${new Date(su.created_at).toLocaleDateString()}</td>
@@ -394,6 +390,26 @@
                 if (!res.ok) throw new Error(data.error || 'Reset failed');
                 alert(`✅ Password updated for merchant "${suName}"!`);
                 loadSubUsers();
+            } catch(err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function resetResellerPassword(rId, rName) {
+            const newPassword = prompt(`Enter new password for reseller "${rName}" (min 8 chars):`);
+            if (!newPassword) return;
+            if (newPassword.length < 8) { alert('Password must be at least 8 characters'); return; }
+
+            try {
+                const res = await fetch(`/api/owner/resellers/${rId}/reset-password`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ new_password: newPassword })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || 'Reset failed');
+                alert(`✅ Password updated for reseller "${rName}"!`);
+                loadResellers();
             } catch(err) {
                 alert('Error: ' + err.message);
             }

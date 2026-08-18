@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Integration Tests: routes/analytics.js
  *
  * Regression tests for BUG-001 (req.user -> req.reseller crash) and BUG-002
@@ -18,6 +18,7 @@ auth.mockImplementation((req, res, next) => {
     req.reseller = { id: 42, username: 'test_reseller' };
     next();
 });
+auth.requireRole = () => (req, res, next) => next();
 
 const analyticsRouter = require('../../routes/analytics');
 const app = express();

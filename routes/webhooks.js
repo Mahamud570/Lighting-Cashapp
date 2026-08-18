@@ -1,24 +1,28 @@
 const express = require('express');
 const router = express.Router();
+const crypto = require('crypto');
 const db = require('../database/db');
 const PayoutService = require('../services/payoutService');
+const InvoiceChecker = require('../services/invoiceChecker');
 
 /**
- * Helper to mark payment as paid and dispatch auto-settlement & real-time socket events
+ * Helper to mark payment as paid atomically and dispatch auto-settlement & real-time socket events
  */
 async function handlePaymentSuccess(payment, io, gatewayName, payload) {
-    if (payment.status === 'paid') return; // already processed
-
-    await db.query(
-        "UPDATE payments SET status = 'paid', paid_at = datetime('now') WHERE id = ?",
+    // Atomic conditional update: only transitions if current status is 'pending'
+    const [updateResult] = await db.query(
+        "UPDATE payments SET status = 'paid', paid_at = datetime('now') WHERE id = ? AND status = 'pending'",
         [payment.id]
     );
 
-    // Record webhook audit log
+    // If affectedRows !== 1, payment was already settled or is currently being settled
+    if (!updateResult || updateResult.affectedRows !== 1) return;
+
+    // Record webhook audit log idempotently
     await db.query(
-        'INSERT INTO webhook_events (reseller_id, gateway, event_id, event_type, payload, processed, status) VALUES (?, ?, ?, ?, ?, 1, "processed")',
-        [payment.reseller_id, gatewayName, payment.invoice_id, 'payment_settled', JSON.stringify(payload)]
-    );
+        'INSERT OR IGNORE INTO webhook_events (reseller_id, gateway, event_id, event_type, payload, processed, status) VALUES (?, ?, ?, ?, ?, 1, "processed")',
+        [payment.reseller_id, gatewayName, payment.invoice_id || `evt_${Date.now()}`, 'payment_settled', JSON.stringify(payload)]
+    ).catch(() => {});
 
     // Notify connected clients
     if (io) {
@@ -32,6 +36,21 @@ async function handlePaymentSuccess(payment, io, gatewayName, payload) {
     });
 }
 
+// Helper to query payment joined with reseller config
+async function findPendingPayment(condition, params) {
+    const [payments] = await db.query(
+        `SELECT p.*, r.wallet_type, r.opennode_api_key, r.opennode_env, r.btcpay_webhook_secret,
+                r.lnbits_url, r.lnbits_invoice_key, r.blink_api_key, r.blink_api_keys, r.blink_wallet_id,
+                r.alby_access_token, r.alby_nwc_string
+         FROM payments p
+         JOIN resellers r ON p.reseller_id = r.id
+         WHERE ${condition} AND p.status = 'pending'
+         LIMIT 1`,
+        params
+    );
+    return payments[0] || null;
+}
+
 // POST /api/webhooks/lnbits
 router.post('/api/webhooks/lnbits', async (req, res) => {
     try {
@@ -43,19 +62,23 @@ router.post('/api/webhooks/lnbits', async (req, res) => {
             return res.status(400).json({ error: 'Missing payment identifier' });
         }
 
-        const [payments] = await db.query(
-            `SELECT * FROM payments WHERE lightning_invoice = ? OR invoice_id = ? LIMIT 1`,
+        const payment = await findPendingPayment(
+            'p.lightning_invoice = ? OR p.invoice_id = ?',
             [bolt11 || paymentHash, paymentHash || bolt11]
         );
 
-        if (payments.length) {
-            await handlePaymentSuccess(payments[0], req.app.get('io'), 'lnbits', body);
+        if (payment) {
+            // Verify with LNbits node directly before trusting webhook payload
+            const check = await InvoiceChecker.check(payment);
+            if (check.paid) {
+                await handlePaymentSuccess(payment, req.app.get('io'), 'lnbits', body);
+            }
         }
 
-        res.json({ success: true, message: 'LNbits webhook received' });
+        res.json({ success: true, message: 'LNbits webhook processed' });
     } catch (err) {
         console.error('LNbits webhook error:', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Webhook processing error' });
     }
 });
 
@@ -66,19 +89,23 @@ router.post('/api/webhooks/blink', async (req, res) => {
         const paymentHash = body.data?.paymentHash || body.paymentHash;
         const paymentRequest = body.data?.paymentRequest || body.paymentRequest;
 
-        const [payments] = await db.query(
-            `SELECT * FROM payments WHERE lightning_invoice = ? OR invoice_id = ? LIMIT 1`,
+        const payment = await findPendingPayment(
+            'p.lightning_invoice = ? OR p.invoice_id = ?',
             [paymentRequest || paymentHash, paymentHash || paymentRequest]
         );
 
-        if (payments.length) {
-            await handlePaymentSuccess(payments[0], req.app.get('io'), 'blink', body);
+        if (payment) {
+            // Verify with Blink node directly before marking paid
+            const check = await InvoiceChecker.check(payment);
+            if (check.paid) {
+                await handlePaymentSuccess(payment, req.app.get('io'), 'blink', body);
+            }
         }
 
         res.json({ success: true, message: 'Blink webhook processed' });
     } catch (err) {
         console.error('Blink webhook error:', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Webhook processing error' });
     }
 });
 
@@ -88,19 +115,22 @@ router.post('/api/webhooks/alby', async (req, res) => {
         const body = req.body;
         const paymentHash = body.data?.payment_hash || body.payment_hash;
 
-        const [payments] = await db.query(
-            `SELECT * FROM payments WHERE invoice_id = ? OR lightning_invoice LIKE ? LIMIT 1`,
+        const payment = await findPendingPayment(
+            'p.invoice_id = ? OR p.lightning_invoice LIKE ?',
             [paymentHash, `%${paymentHash}%`]
         );
 
-        if (payments.length) {
-            await handlePaymentSuccess(payments[0], req.app.get('io'), 'alby', body);
+        if (payment) {
+            const check = await InvoiceChecker.check(payment);
+            if (check.paid || body.settled === true) {
+                await handlePaymentSuccess(payment, req.app.get('io'), 'alby', body);
+            }
         }
 
         res.json({ success: true, message: 'Alby webhook processed' });
     } catch (err) {
         console.error('Alby webhook error:', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Webhook processing error' });
     }
 });
 
@@ -108,21 +138,29 @@ router.post('/api/webhooks/alby', async (req, res) => {
 router.post('/api/webhooks/opennode', async (req, res) => {
     try {
         const body = req.body;
-        if (body.status === 'paid') {
-            const [payments] = await db.query(
-                `SELECT * FROM payments WHERE invoice_id = ? LIMIT 1`,
-                [body.id]
-            );
+        if (!body.id) return res.status(400).json({ error: 'Missing OpenNode charge ID' });
 
-            if (payments.length) {
-                await handlePaymentSuccess(payments[0], req.app.get('io'), 'opennode', body);
+        const payment = await findPendingPayment('p.invoice_id = ?', [body.id]);
+        if (payment) {
+            // Verify HMAC signature if opennode_api_key exists
+            const receivedHash = req.headers['hashed_order'];
+            if (payment.opennode_api_key && receivedHash) {
+                const expectedHash = crypto.createHmac('sha256', payment.opennode_api_key).update(body.id).digest('hex');
+                if (receivedHash !== expectedHash) {
+                    return res.status(401).json({ error: 'Invalid OpenNode HMAC signature' });
+                }
+            }
+
+            const check = await InvoiceChecker.check(payment);
+            if (check.paid || body.status === 'paid') {
+                await handlePaymentSuccess(payment, req.app.get('io'), 'opennode', body);
             }
         }
 
         res.json({ success: true });
     } catch (err) {
         console.error('OpenNode webhook error:', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Webhook processing error' });
     }
 });
 
@@ -130,21 +168,30 @@ router.post('/api/webhooks/opennode', async (req, res) => {
 router.post('/api/webhooks/btcpay', async (req, res) => {
     try {
         const body = req.body;
-        if (body.type === 'InvoiceSettled' || body.type === 'InvoicePaymentSettled') {
-            const [payments] = await db.query(
-                `SELECT * FROM payments WHERE invoice_id = ? LIMIT 1`,
-                [body.invoiceId]
-            );
+        const invoiceId = body.invoiceId || body.id;
+        if (!invoiceId) return res.status(400).json({ error: 'Missing BTCPay invoice ID' });
 
-            if (payments.length) {
-                await handlePaymentSuccess(payments[0], req.app.get('io'), 'btcpay', body);
+        const payment = await findPendingPayment('p.invoice_id = ?', [invoiceId]);
+        if (payment) {
+            // Verify BTCPay signature header if btcpay_webhook_secret is configured
+            const btcpaySig = req.headers['btcpay-sig'];
+            if (payment.btcpay_webhook_secret && btcpaySig) {
+                const rawBody = JSON.stringify(req.body);
+                const expectedSig = 'sha256=' + crypto.createHmac('sha256', payment.btcpay_webhook_secret).update(rawBody).digest('hex');
+                if (btcpaySig !== expectedSig) {
+                    return res.status(401).json({ error: 'Invalid BTCPay webhook signature' });
+                }
+            }
+
+            if (body.type === 'InvoiceSettled' || body.type === 'InvoicePaymentSettled' || body.status === 'Settled') {
+                await handlePaymentSuccess(payment, req.app.get('io'), 'btcpay', body);
             }
         }
 
         res.json({ success: true });
     } catch (err) {
         console.error('BTCPay webhook error:', err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Webhook processing error' });
     }
 });
 

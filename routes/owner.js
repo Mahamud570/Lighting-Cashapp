@@ -47,12 +47,13 @@ router.get('/api/owner/stats', async (req, res) => {
     }
 });
 
-// GET /api/owner/resellers — List All Reseller Panels (with plain_password)
+// GET /api/owner/resellers — List All Reseller Panels
 router.get('/api/owner/resellers', async (req, res) => {
     try {
         const [resellers] = await db.query(
             `SELECT 
-                r.id, r.username, r.email, r.role, r.status, r.wallet_type, r.plain_password, r.created_at,
+                r.id, r.username, r.email, r.role, r.status, r.wallet_type, r.created_at,
+                r.must_change_password,
                 (SELECT COUNT(*) FROM sub_users su WHERE su.reseller_id = r.id) as sub_user_count,
                 (SELECT COUNT(*) FROM payment_links pl WHERE pl.reseller_id = r.id) as link_count,
                 COALESCE((SELECT SUM(total_usd) FROM payments p WHERE p.reseller_id = r.id AND p.status = 'paid'), 0) as paid_volume_usd
@@ -113,8 +114,8 @@ router.post('/api/owner/resellers', async (req, res) => {
 
         const hash = await bcrypt.hash(password, 12);
         const [result] = await db.query(
-            "INSERT INTO resellers (username, email, password, plain_password, role, status) VALUES (?, ?, ?, ?, 'reseller', 'active')",
-            [username, email, hash, password]
+            "INSERT INTO resellers (username, email, password, role, status, must_change_password) VALUES (?, ?, ?, 'reseller', 'active', 1)",
+            [username, email, hash]
         );
 
         await db.query(
@@ -129,7 +130,7 @@ router.post('/api/owner/resellers', async (req, res) => {
                 id: result.insertId,
                 username,
                 email,
-                plain_password: password,
+                temporary_password: password,
                 role: 'reseller',
                 status: 'active'
             }
@@ -177,7 +178,9 @@ router.put('/api/owner/resellers/:id/config', async (req, res) => {
         if (password && password.length >= 8) {
             const hash = await bcrypt.hash(password, 12);
             addField('password', hash);
-            addField('plain_password', password);
+            addField('must_change_password', 0);
+            // Revoke sessions when password is changed via master config
+            await db.query('DELETE FROM sessions WHERE reseller_id = ?', [resellerId]).catch(() => {});
         }
 
         addField('status', status);
@@ -241,6 +244,11 @@ router.put('/api/owner/resellers/:id/status', async (req, res) => {
 
         await db.query('UPDATE resellers SET status = ? WHERE id = ?', [status, resellerId]);
 
+        // If suspending, revoke all active sessions immediately
+        if (status === 'suspended') {
+            await db.query('DELETE FROM sessions WHERE reseller_id = ?', [resellerId]).catch(() => {});
+        }
+
         await db.query(
             'INSERT INTO activities (reseller_id, actor, event, description, ip) VALUES (?, ?, ?, ?, ?)',
             [req.reseller.id, req.reseller.username, 'update_reseller_status', `Updated reseller ${resellerId} status to ${status}`, req.clientIp]
@@ -263,9 +271,12 @@ router.post('/api/owner/resellers/:id/reset-password', async (req, res) => {
         const resellerId = parseInt(req.params.id, 10);
         const hash = await bcrypt.hash(new_password, 12);
 
-        await db.query('UPDATE resellers SET password = ?, plain_password = ? WHERE id = ?', [hash, new_password, resellerId]);
+        await db.query('UPDATE resellers SET password = ?, must_change_password = 1 WHERE id = ?', [hash, resellerId]);
 
-        res.json({ success: true, message: 'Reseller password updated successfully' });
+        // Revoke all existing sessions so old logins are invalidated
+        await db.query('DELETE FROM sessions WHERE reseller_id = ?', [resellerId]).catch(() => {});
+
+        res.json({ success: true, message: 'Reseller password updated successfully', temporary_password: new_password });
     } catch (err) {
         res.status(500).json({ error: 'Failed to reset reseller password' });
     }
@@ -276,7 +287,8 @@ router.get('/api/owner/sub-users', async (req, res) => {
     try {
         const [subUsers] = await db.query(
             `SELECT 
-                su.id, su.name, su.email, su.rate_per_dollar, su.plain_password, su.created_at,
+                su.id, su.name, su.email, su.rate_per_dollar, su.created_at,
+                su.must_change_password,
                 r.username as reseller_username, r.email as reseller_email
              FROM sub_users su
              JOIN resellers r ON su.reseller_id = r.id
@@ -301,9 +313,9 @@ router.post('/api/owner/sub-users/:id/reset-password', async (req, res) => {
         const subUserId = parseInt(req.params.id, 10);
         const hash = await bcrypt.hash(new_password, 12);
 
-        await db.query('UPDATE sub_users SET password = ?, plain_password = ? WHERE id = ?', [hash, new_password, subUserId]);
+        await db.query('UPDATE sub_users SET password = ?, must_change_password = 1 WHERE id = ?', [hash, subUserId]);
 
-        res.json({ success: true, message: 'Merchant sub-user password updated successfully' });
+        res.json({ success: true, message: 'Merchant sub-user password updated successfully', temporary_password: new_password });
     } catch (err) {
         res.status(500).json({ error: 'Failed to reset sub-user password' });
     }

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Integration Tests: routes/security.js
  * Covers: GET status (try/catch fix), TOTP disable (S-004 current_password requirement),
  *         password change (S-008 current_password requirement, 8 char minimum).
@@ -25,6 +25,7 @@ auth.mockImplementation((req, res, next) => {
     req.clientIp  = '127.0.0.1';
     next();
 });
+auth.requireRole = () => (req, res, next) => next();
 
 const securityRouter = require('../../routes/security');
 const app = express();

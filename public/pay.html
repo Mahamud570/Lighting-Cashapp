@@ -895,11 +895,32 @@ function triggerCashApp() {
   }
 }
 
+function copyToClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+    } else {
+        fallbackCopy(text);
+    }
+}
+
+function fallbackCopy(text) {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-999999px';
+    textArea.style.top = '-999999px';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    try { document.execCommand('copy'); } catch (err) {}
+    document.body.removeChild(textArea);
+}
+
 function copyInvoiceData() {
   if (!invoicePayload) return;
   const text = invoicePayload.lightning_invoice || invoicePayload.uri;
   if (text) {
-    navigator.clipboard.writeText(text);
+    copyToClipboard(text);
     const btn = document.getElementById('copyInvoiceBtn');
     const copyIcon = document.getElementById('copyIcon');
     if (btn) btn.textContent = '✅ Copied!';
