@@ -109,15 +109,39 @@ function renderQR(links) {
   if (!links.length) { grid.innerHTML='<div class="card empty">No assigned links available for QR codes.</div>'; return; }
   links.forEach((l, i) => {
     const url = `${location.origin}/pay/${encodeURIComponent(l.slug)}`;
-    const card=document.createElement('div'); card.className='card qr-card';
-    const box=document.createElement('div'); box.className='qr-box'; box.id=`qr-${i}`;
-    const info=document.createElement('div');
-    info.innerHTML=`<strong>${esc(l.title)}</strong><div class="hint">/pay/${esc(l.slug)}</div><div class="actions" style="margin-top:12px"><button class="btn download-qr">Download QR</button></div>`;
-    card.append(box,info); grid.appendChild(card);
-    try { QRCode.toCanvas(box, url, {width:170, margin:2}, err => { if(err) box.textContent='QR unavailable'; }); } catch (_) { box.textContent='QR unavailable'; }
+    const card = document.createElement('div'); card.className = 'card qr-card';
+    const box = document.createElement('div'); box.className = 'qr-box';
+    const canvas = document.createElement('canvas'); canvas.id = `qr-${i}`;
+    box.appendChild(canvas);
+
+    const info = document.createElement('div');
+    info.innerHTML = `<strong>${esc(l.title)}</strong><div class="hint">/pay/${esc(l.slug)}</div><div class="actions" style="margin-top:12px"><button class="btn download-qr">Download QR</button></div>`;
+    card.append(box, info);
+    grid.appendChild(card);
+
+    function drawQR() {
+      if (window.QRCode && typeof window.QRCode.toCanvas === 'function') {
+        window.QRCode.toCanvas(canvas, url, {
+          width: 160,
+          margin: 2,
+          color: { dark: '#000000', light: '#ffffff' }
+        }, err => {
+          if (err) {
+            console.error('QR draw error:', err);
+            box.textContent = 'QR unavailable';
+          }
+        });
+      } else {
+        setTimeout(drawQR, 100);
+      }
+    }
+    drawQR();
+
     info.querySelector('.download-qr').addEventListener('click', () => {
-      const canvas=box.querySelector('canvas'); if(!canvas) return;
-      const a=document.createElement('a'); a.download=`${l.slug}-qr.png`; a.href=canvas.toDataURL('image/png'); a.click();
+      const a = document.createElement('a');
+      a.download = `${l.slug}-qr.png`;
+      a.href = canvas.toDataURL('image/png');
+      a.click();
     });
   });
 }
