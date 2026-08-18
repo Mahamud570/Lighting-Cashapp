@@ -27,7 +27,8 @@ jobs:
           node --check middleware/auth.js
           node --check database/db.js
           node --check public/js/reseller-enhancements.js
-      - run: npm test
+      - name: Test suite
+        run: npm test -- --runInBand
       - name: Build clean deploy.zip
         run: |
           zip -r deploy.zip . \
