@@ -97,12 +97,11 @@ async function initDb() {
     ensureColumn('payments', 'receiving_wallet', 'TEXT');
     ensureColumn('payments', 'seller_checked', 'INTEGER DEFAULT 0');
 
-    // Session identity columns prevent reseller session management from exposing
-    // or revoking sub-user sessions that happen to share the same parent reseller_id.
-    ensureColumn('sessions', 'account_type', "TEXT DEFAULT 'reseller'");
+    // New logins explicitly stamp their real account identity. Legacy sessions are
+    // intentionally left unclassified so an old sub-user session can never appear
+    // as a reseller session in the new Sessions & Browsers UI.
+    ensureColumn('sessions', 'account_type', 'TEXT');
     ensureColumn('sessions', 'account_id', 'INTEGER');
-    try { db.run("UPDATE sessions SET account_type = 'reseller' WHERE account_type IS NULL OR account_type = ''"); } catch (_) {}
-    try { db.run('UPDATE sessions SET account_id = reseller_id WHERE account_id IS NULL'); } catch (_) {}
 
     db.run(`CREATE TABLE IF NOT EXISTS trusted_devices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
