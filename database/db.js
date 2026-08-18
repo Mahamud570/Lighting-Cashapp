@@ -97,7 +97,13 @@ async function initDb() {
     ensureColumn('payments', 'receiving_wallet', 'TEXT');
     ensureColumn('payments', 'seller_checked', 'INTEGER DEFAULT 0');
 
-    // Persistent trusted-browser records. Only token hashes are stored server-side.
+    // Session identity columns prevent reseller session management from exposing
+    // or revoking sub-user sessions that happen to share the same parent reseller_id.
+    ensureColumn('sessions', 'account_type', "TEXT DEFAULT 'reseller'");
+    ensureColumn('sessions', 'account_id', 'INTEGER');
+    try { db.run("UPDATE sessions SET account_type = 'reseller' WHERE account_type IS NULL OR account_type = ''"); } catch (_) {}
+    try { db.run('UPDATE sessions SET account_id = reseller_id WHERE account_id IS NULL'); } catch (_) {}
+
     db.run(`CREATE TABLE IF NOT EXISTS trusted_devices (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         reseller_id INTEGER NOT NULL,
@@ -113,7 +119,7 @@ async function initDb() {
         FOREIGN KEY (reseller_id) REFERENCES resellers(id) ON DELETE CASCADE
     )`);
     db.run('CREATE INDEX IF NOT EXISTS idx_trusted_devices_owner ON trusted_devices(reseller_id, expires_at)');
-    db.run('CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(reseller_id, expires_at)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(account_type, account_id, expires_at)');
 
     try {
         const bcrypt = require('bcryptjs');
@@ -182,11 +188,8 @@ const pool = {
         }
 
         const stmt = db.prepare(converted);
-        try {
-            stmt.run(flatParams);
-        } finally {
-            stmt.free();
-        }
+        try { stmt.run(flatParams); }
+        finally { stmt.free(); }
 
         const idResult = db.exec('SELECT last_insert_rowid()');
         const insertId = idResult[0]?.values[0]?.[0] || 0;
