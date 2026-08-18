@@ -8,17 +8,32 @@ const speakeasy = require('speakeasy');
 const db = require('../database/db');
 const { authLimiter } = require('../middleware/rateLimiter');
 
-// GET /login
+const TRUST_COOKIE = 'trusted_browser';
+const TRUST_DAYS = 30;
+
+function sha256(value) {
+    return crypto.createHash('sha256').update(String(value)).digest('hex');
+}
+
+function deviceTypeFromUa(ua) {
+    return /mobile|android|iphone|ipad/i.test(ua || '') ? 'Mobile' : 'Desktop';
+}
+
+function browserLabel(ua) {
+    const s = ua || '';
+    const browser = /Edg\//.test(s) ? 'Edge' : /Firefox\//.test(s) ? 'Firefox' : /Chrome\//.test(s) ? 'Chrome' : /Safari\//.test(s) ? 'Safari' : 'Browser';
+    const os = /Android/.test(s) ? 'Android' : /iPhone|iPad/.test(s) ? 'iOS' : /Windows/.test(s) ? 'Windows' : /Mac OS X|Macintosh/.test(s) ? 'macOS' : /Linux/.test(s) ? 'Linux' : 'Device';
+    return `${browser} on ${os}`;
+}
+
 router.get('/login', (req, res) => {
     res.sendFile('login.html', { root: path.join(__dirname, '../public') });
 });
 
-// GET /register -> Redirect to /login (Public registration is disabled)
 router.get('/register', (req, res) => {
     res.redirect('/login');
 });
 
-// POST /api/auth/login
 router.post('/api/auth/login', authLimiter, async (req, res) => {
     try {
         const { username, password } = req.body;
@@ -27,7 +42,6 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
         const cleanUser = String(username).trim();
         const cleanPass = String(password).trim();
 
-        // 1. Try Resellers / Owners table first (case-insensitive)
         const [rows] = await db.query(
             "SELECT * FROM resellers WHERE (LOWER(TRIM(username)) = LOWER(?) OR LOWER(TRIM(email)) = LOWER(?)) AND (status IS NULL OR LOWER(status) = 'active')",
             [cleanUser, cleanUser]
@@ -41,7 +55,6 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
             userObj = rows[0];
             role = userObj.role || 'reseller';
         } else {
-            // 2. Try Sub-users table if not found in resellers
             const [subRows] = await db.query(
                 "SELECT * FROM sub_users WHERE (LOWER(TRIM(email)) = LOWER(?) OR LOWER(TRIM(name)) = LOWER(?)) AND (status IS NULL OR LOWER(status) = 'active')",
                 [cleanUser, cleanUser]
@@ -58,52 +71,80 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
         const valid = await bcrypt.compare(cleanPass, userObj.password);
         if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
-        // 2FA Check — for reseller/owner accounts if enabled
-        if (!isSubUser && userObj.totp_enabled && userObj.totp_secret) {
+        const ua = req.headers['user-agent'] || '';
+        const ip = req.clientIp || req.ip;
+        let trustedBrowserValid = false;
+
+        // Reseller/owner trusted browser lookup. Sub-users do not use this 2FA flow.
+        if (!isSubUser && userObj.totp_enabled && userObj.totp_secret && req.cookies?.[TRUST_COOKIE]) {
+            const trustHash = sha256(req.cookies[TRUST_COOKIE]);
+            const [trustedRows] = await db.query(
+                "SELECT id FROM trusted_devices WHERE reseller_id = ? AND token_hash = ? AND revoked_at IS NULL AND expires_at > datetime('now') LIMIT 1",
+                [userObj.id, trustHash]
+            );
+            if (trustedRows.length) {
+                trustedBrowserValid = true;
+                await db.query(
+                    "UPDATE trusted_devices SET last_used = datetime('now'), ip = ?, user_agent = ?, device_type = ? WHERE id = ?",
+                    [ip, ua, deviceTypeFromUa(ua), trustedRows[0].id]
+                );
+            } else {
+                res.clearCookie(TRUST_COOKIE, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
+            }
+        }
+
+        // 2FA is required only if this browser is not already trusted.
+        if (!isSubUser && userObj.totp_enabled && userObj.totp_secret && !trustedBrowserValid) {
             const { totp_code } = req.body;
             if (!totp_code) {
-                return res.status(200).json({ requires_2fa: true, message: 'Enter your 2FA code' });
+                return res.status(200).json({ requires_2fa: true, can_trust_browser: true, message: 'Enter your 2FA code' });
             }
             const totpValid = speakeasy.totp.verify({
                 secret: userObj.totp_secret,
                 encoding: 'base32',
-                token: totp_code.replace(/\s/g, ''),
+                token: String(totp_code).replace(/\s/g, ''),
                 window: 2
             });
-            if (!totpValid) {
-                return res.status(401).json({ error: 'Invalid 2FA code. Please try again.' });
+            if (!totpValid) return res.status(401).json({ error: 'Invalid 2FA code. Please try again.' });
+
+            if (req.body.trust_browser === true || req.body.trust_browser === 'true') {
+                const rawTrustToken = crypto.randomBytes(48).toString('base64url');
+                const trustHash = sha256(rawTrustToken);
+                const expiresAt = new Date(Date.now() + TRUST_DAYS * 24 * 60 * 60 * 1000);
+                await db.query(
+                    `INSERT INTO trusted_devices (reseller_id, token_hash, label, ip, user_agent, device_type, expires_at)
+                     VALUES (?,?,?,?,?,?,?)`,
+                    [userObj.id, trustHash, browserLabel(ua), ip, ua, deviceTypeFromUa(ua), expiresAt]
+                );
+                res.cookie(TRUST_COOKIE, rawTrustToken, {
+                    httpOnly: true,
+                    secure: process.env.NODE_ENV === 'production',
+                    sameSite: 'lax',
+                    maxAge: TRUST_DAYS * 24 * 60 * 60 * 1000
+                });
             }
         }
 
-        // Create JWT with role info
         const jwtSecret = process.env.JWT_SECRET;
-        if (!jwtSecret) {
-            throw new Error('JWT_SECRET environment variable is missing');
-        }
+        if (!jwtSecret) throw new Error('JWT_SECRET environment variable is missing');
 
         const payload = isSubUser
             ? { id: userObj.id, username: userObj.name, role: 'sub_user', type: 'sub_user', reseller_id: userObj.reseller_id }
-            : { id: userObj.id, username: userObj.username, role: role, type: 'reseller' };
+            : { id: userObj.id, username: userObj.username, role, type: 'reseller' };
 
         const token = jwt.sign(payload, jwtSecret, { expiresIn: '7d' });
-        const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+        const tokenHash = sha256(token);
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-
-        // Detect device
-        const ua = req.headers['user-agent'] || '';
-        const deviceType = /mobile/i.test(ua) ? 'Mobile' : 'Desktop';
         const resellerId = isSubUser ? userObj.reseller_id : userObj.id;
 
-        // Save session
         await db.query(
             'INSERT INTO sessions (reseller_id, token_hash, ip, user_agent, device_type, expires_at) VALUES (?,?,?,?,?,?)',
-            [resellerId, tokenHash, req.clientIp || req.ip, ua, deviceType, expiresAt]
+            [resellerId, tokenHash, ip, ua, deviceTypeFromUa(ua), expiresAt]
         );
 
-        // Log activity
         await db.query(
             'INSERT INTO activities (reseller_id, sub_user_id, actor, event, ip, device) VALUES (?,?,?,?,?,?)',
-            [resellerId, isSubUser ? userObj.id : null, isSubUser ? userObj.name : userObj.username, 'login', req.clientIp || req.ip, ua]
+            [resellerId, isSubUser ? userObj.id : null, isSubUser ? userObj.name : userObj.username, trustedBrowserValid ? 'login_trusted_browser' : 'login', ip, ua]
         );
 
         res.cookie('auth_token', token, {
@@ -114,25 +155,24 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
         });
 
         const redirectUrl = role === 'owner' ? '/owner' : (role === 'sub_user' ? '/subuser' : '/reseller');
-        res.json({ success: true, role, redirect: redirectUrl });
+        res.json({ success: true, role, redirect: redirectUrl, trusted_browser: trustedBrowserValid });
     } catch (err) {
-        console.error(err);
+        console.error('[auth] Login error:', err && err.stack ? err.stack : err);
         res.status(500).json({ error: 'Server error' });
     }
 });
 
-// POST /api/auth/register (Disabled)
 router.post('/api/auth/register', (req, res) => {
     res.status(403).json({ error: 'Public registration is disabled. Accounts must be created by an Owner or Reseller.' });
 });
 
-// POST /api/auth/logout
 router.post('/api/auth/logout', async (req, res) => {
     const token = req.cookies?.auth_token;
     if (token) {
-        const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+        const tokenHash = sha256(token);
         await db.query('DELETE FROM sessions WHERE token_hash = ?', [tokenHash]).catch(() => {});
     }
+    // Deliberately keep trusted_browser cookie. Logout ends the session but the browser remains trusted.
     res.clearCookie('auth_token');
     res.json({ success: true });
 });
