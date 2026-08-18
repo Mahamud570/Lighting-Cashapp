@@ -1,0 +1,97 @@
+/* Reseller mobile/responsive hardening */
+html, body { max-width: 100%; overflow-x: hidden; }
+.layout, .main, .content, .page { min-width: 0; }
+.card, .radio-card, .wallet-status-box, .form-group { min-width: 0; }
+.form-control, input, select, textarea, button { max-width: 100%; }
+.table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table-wrap table { min-width: 680px; }
+.radio-card > label { width: 100%; }
+.radio-card > label > div { min-width: 0; width: 100%; }
+.rc-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.rc-sub, .form-hint, .page-sub, .device-meta { overflow-wrap: anywhere; }
+.flex { flex-wrap: wrap; }
+.sidebar-backdrop { display:none; position:fixed; inset:0; z-index:90; background:rgba(0,0,0,.58); backdrop-filter:blur(2px); }
+.sidebar-backdrop.open { display:block; }
+.reseller-support-card { margin-top:28px; border:1px solid rgba(34,211,238,.32); background:linear-gradient(135deg,rgba(14,165,233,.10),rgba(99,102,241,.10)); border-radius:14px; padding:16px; display:flex; align-items:center; justify-content:space-between; gap:14px; box-shadow:0 0 26px rgba(14,165,233,.08); }
+.reseller-support-card .support-copy { min-width:0; }
+.reseller-support-card .support-title { color:#fff; font-size:15px; font-weight:800; letter-spacing:.01em; }
+.reseller-support-card .support-sub { color:var(--text-secondary); font-size:12px; margin-top:3px; }
+.reseller-support-card .support-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; flex:none; padding:10px 14px; border-radius:10px; background:#229ED9; color:#fff; font-size:13px; font-weight:800; transition:transform .18s ease, box-shadow .18s ease; }
+.reseller-support-card .support-button:hover { color:#fff; transform:translateY(-1px); box-shadow:0 8px 24px rgba(34,158,217,.28); }
+.reseller-support-card .tg-icon { width:22px; height:22px; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background:rgba(255,255,255,.16); }
+.session-section { margin-top:18px; }
+.session-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+.session-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; }
+.session-card { border:1px solid var(--border); background:rgba(255,255,255,.025); border-radius:12px; padding:14px; display:flex; gap:12px; align-items:flex-start; }
+.session-card.current { border-color:rgba(16,185,129,.35); background:rgba(16,185,129,.06); }
+.session-card.trusted { border-color:rgba(99,102,241,.35); background:rgba(99,102,241,.05); }
+.session-card .session-icon { font-size:24px; width:34px; flex:none; }
+.session-card .session-body { min-width:0; flex:1; }
+.session-card .session-name { font-size:13px; font-weight:700; color:var(--text-primary); display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.session-card .session-meta { font-size:11px; color:var(--text-muted); margin-top:4px; overflow-wrap:anywhere; }
+.session-card .session-actions { margin-left:auto; flex:none; }
+.tech-short-note { font-size:11px; color:var(--text-muted); margin-top:4px; }
+
+@media (max-width: 900px) {
+  .grid-2, .grid-3, .grid-4 { grid-template-columns:1fr !important; }
+  .form-row { grid-template-columns:1fr !important; }
+  .wallet-status-box { align-items:flex-start; flex-wrap:wrap; }
+  .wallet-status-box .btn { width:100%; }
+}
+
+@media (max-width: 768px) {
+  :root { --sidebar-w: 286px; }
+  .sidebar { width:min(86vw,286px); box-shadow:16px 0 42px rgba(0,0,0,.45); }
+  .main { width:100%; max-width:100%; }
+  .topbar { height:56px; padding:0 12px; gap:8px; }
+  .topbar-title { font-size:14px; max-width:42vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .topbar-right { gap:6px; }
+  .topbar-right .topbar-badge { display:none !important; }
+  .topbar-right .btn { padding:7px 9px; font-size:11px; }
+  .hamburger { display:flex; width:40px; height:40px; align-items:center; justify-content:center; font-size:20px; border-radius:9px; background:rgba(255,255,255,.04); }
+  .content { padding:12px; width:100%; }
+  .page-header { margin-bottom:16px; align-items:stretch; }
+  .page-header > div:first-child { min-width:0; flex:1; }
+  .page-title { font-size:19px; overflow-wrap:anywhere; }
+  .page-sub { font-size:12px; }
+  .page-header > .btn { width:100%; }
+  .metrics-grid { grid-template-columns:1fr 1fr !important; gap:10px; margin-bottom:14px; }
+  .metric-card { padding:14px; }
+  .metric-value { font-size:23px; }
+  .metric-icon { width:34px; height:34px; margin-bottom:9px; }
+  .card { padding:14px; border-radius:10px; }
+  .card-title { margin-bottom:12px; }
+  .radio-card { padding:14px !important; }
+  .radio-card label { align-items:flex-start !important; }
+  .rc-title { font-size:15px; line-height:1.35; }
+  .rc-title .badge { margin-left:0 !important; }
+  .rc-body { padding-top:8px; }
+  .form-row { display:grid !important; grid-template-columns:1fr !important; gap:8px !important; }
+  .form-group { width:100%; }
+  .form-control { width:100%; min-height:44px; font-size:16px; }
+  textarea.form-control { min-height:88px; }
+  .radio-card .flex.gap-8, .card .flex.gap-8 { flex-direction:column; align-items:stretch; width:100%; }
+  .radio-card .flex.gap-8 .btn, .card .flex.gap-8 .btn { width:100%; }
+  .modal-overlay { padding:10px; align-items:flex-end; }
+  .modal { max-width:none; width:100%; max-height:88vh; border-radius:16px 16px 0 0; padding:18px 14px; }
+  .toast-container { left:12px; right:12px; bottom:14px; }
+  .toast { max-width:none; min-width:0; width:100%; }
+  .reseller-support-card { flex-direction:column; align-items:stretch; }
+  .reseller-support-card .support-button { width:100%; }
+  .session-grid { grid-template-columns:1fr; }
+  .session-card { padding:12px; }
+}
+
+@media (max-width: 430px) {
+  .metrics-grid { grid-template-columns:1fr !important; }
+  .topbar-right .btn { max-width:108px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .content { padding:10px; }
+  .card { padding:12px; }
+  .page-title { font-size:18px; }
+  .table-wrap { margin-left:-2px; margin-right:-2px; width:calc(100% + 4px); }
+}
+
+@media (max-width: 340px) {
+  .topbar-title { max-width:34vw; }
+  .topbar-right .btn { display:none; }
+}
