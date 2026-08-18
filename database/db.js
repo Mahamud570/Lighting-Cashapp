@@ -124,22 +124,23 @@ async function initDb() {
         const bcrypt = require('bcryptjs');
         const adminHash = bcrypt.hashSync('admin123', 10);
         const resellerHash = bcrypt.hashSync('reseller123', 10);
+        const isTest = process.env.NODE_ENV === 'test';
         try {
             db.run(`INSERT INTO resellers (username, email, password, role, status, must_change_password)
                     VALUES ('admin', 'admin@lightningpay.local', '${adminHash}', 'owner', 'active', 0)
-                    ON CONFLICT(username) DO NOTHING`);
+                    ON CONFLICT(username) DO ${isTest ? `UPDATE SET password='${adminHash}', role='owner', status='active', totp_enabled=0, totp_secret=NULL, must_change_password=0` : 'NOTHING'}`);
         } catch (_) {}
         try {
             db.run(`INSERT INTO resellers (username, email, password, role, status, must_change_password)
                     VALUES ('reseller', 'reseller@lightningpay.local', '${resellerHash}', 'reseller', 'active', 0)
-                    ON CONFLICT(username) DO NOTHING`);
+                    ON CONFLICT(username) DO ${isTest ? `UPDATE SET password='${resellerHash}', role='reseller', status='active', totp_enabled=0, totp_secret=NULL, must_change_password=0` : 'NOTHING'}`);
         } catch (_) {}
     } catch (e) {
-        console.error('[db] Seed account warning:', e.message);
+        if (process.env.NODE_ENV !== 'test') console.error('[db] Seed account warning:', e.message);
     }
 
     saveToDisk();
-    console.log('✅ SQLite (sql.js WASM) database initialized successfully.');
+    if (process.env.NODE_ENV !== 'test') console.log('✅ SQLite (sql.js WASM) database initialized successfully.');
 }
 
 const dbInitPromise = initDb().catch(err => {
@@ -202,7 +203,7 @@ const gracefulClose = () => {
     if (db) {
         saveToDisk();
         db.close();
-        console.log('[db] SQLite connection closed cleanly.');
+        if (process.env.NODE_ENV !== 'test') console.log('[db] SQLite connection closed cleanly.');
     }
 };
 process.once('SIGTERM', gracefulClose);
