@@ -16,6 +16,8 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      - name: Refresh lock metadata for clean install
+        run: npm install --package-lock-only --ignore-scripts
       - run: npm ci
       - name: Syntax checks
         run: |
