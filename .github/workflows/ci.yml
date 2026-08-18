@@ -26,3 +26,19 @@ jobs:
           node --check database/db.js
           node --check public/js/reseller-enhancements.js
       - run: npm test
+      - name: Build clean deploy.zip
+        run: |
+          zip -r deploy.zip . \
+            -x '.git/*' \
+               '.github/*' \
+               'node_modules/*' \
+               'data/*' \
+               '.env' \
+               '.env.*' \
+               'coverage/*' \
+               '*.zip'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deploy
+          path: deploy.zip
+          retention-days: 7
