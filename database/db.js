@@ -60,77 +60,58 @@ async function initDb() {
         }
     }
 
-    // Auto-migrate columns (all in one place, including plain_password & payer_location)
-    const migrations = [
-        "ALTER TABLE resellers ADD COLUMN role TEXT DEFAULT 'reseller'",
-        "ALTER TABLE resellers ADD COLUMN blink_api_keys TEXT",
-        "ALTER TABLE resellers ADD COLUMN lnbits_url TEXT",
-        "ALTER TABLE resellers ADD COLUMN lnbits_invoice_key TEXT",
-        "ALTER TABLE resellers ADD COLUMN lnbits_admin_key TEXT",
-        "ALTER TABLE resellers ADD COLUMN blink_api_key TEXT",
-        "ALTER TABLE resellers ADD COLUMN blink_wallet_id TEXT",
-        "ALTER TABLE resellers ADD COLUMN alby_nwc_string TEXT",
-        "ALTER TABLE resellers ADD COLUMN alby_access_token TEXT",
-        "ALTER TABLE resellers ADD COLUMN alby_webhook_secret TEXT",
-        "ALTER TABLE resellers ADD COLUMN binance_api_key TEXT",
-        "ALTER TABLE resellers ADD COLUMN binance_api_secret TEXT",
-        "ALTER TABLE resellers ADD COLUMN binance_auto_sweep_enabled INTEGER DEFAULT 0",
-        "ALTER TABLE resellers ADD COLUMN binance_sweep_threshold_usd REAL DEFAULT 0",
-        "ALTER TABLE resellers ADD COLUMN binance_sweep_type TEXT DEFAULT 'lightning'",
-        "ALTER TABLE resellers ADD COLUMN auto_payout_enabled INTEGER DEFAULT 0",
-        "ALTER TABLE resellers ADD COLUMN auto_payout_address TEXT",
-        "ALTER TABLE resellers ADD COLUMN auto_payout_percent REAL DEFAULT 100",
-        "ALTER TABLE resellers ADD COLUMN telegram_bot_token TEXT",
-        "ALTER TABLE resellers ADD COLUMN telegram_chat_id TEXT",
-        "ALTER TABLE resellers ADD COLUMN binance_sweep_wallet_balance_enabled INTEGER DEFAULT 0",
-        "ALTER TABLE resellers ADD COLUMN must_change_password INTEGER DEFAULT 0",
-        "ALTER TABLE sub_users ADD COLUMN must_change_password INTEGER DEFAULT 0",
-        "ALTER TABLE payments ADD COLUMN payer_location TEXT",
-        "ALTER TABLE payments ADD COLUMN verify_url TEXT"
-    ];
-
-    for (const mig of migrations) {
-        try { db.run(mig); } catch (e) { /* column already exists */ }
+    // Ensure all dynamic columns exist across tables
+    function ensureColumn(tableName, columnName, columnDef) {
+        try {
+            const info = db.exec(`PRAGMA table_info(${tableName})`);
+            if (info && info[0] && info[0].values) {
+                const cols = info[0].values.map(v => v[1]);
+                if (!cols.includes(columnName)) {
+                    db.run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDef}`);
+                }
+            }
+        } catch (_) {}
     }
 
-    // Upgrade payments table to allow all provider types (lnbits, blink, alby, opennode, btcpay, email, manual)
-    try {
-        db.run(`
-            PRAGMA foreign_keys = OFF;
-            CREATE TABLE IF NOT EXISTS payments_v2 (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                link_id INTEGER NOT NULL,
-                reseller_id INTEGER NOT NULL,
-                sub_user_id INTEGER,
-                invoice_id TEXT UNIQUE,
-                provider TEXT DEFAULT 'email',
-                amount_usd REAL NOT NULL,
-                charge_usd REAL DEFAULT 0,
-                total_usd REAL NOT NULL,
-                btc_amount REAL,
-                lightning_invoice TEXT,
-                payment_request TEXT,
-                verify_url TEXT,
-                payer_ip TEXT,
-                payer_location TEXT,
-                payer_note TEXT,
-                receiving_wallet TEXT,
-                status TEXT DEFAULT 'pending',
-                paid_at DATETIME,
-                expires_at DATETIME,
-                seller_checked INTEGER DEFAULT 0,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (link_id) REFERENCES payment_links(id) ON DELETE CASCADE,
-                FOREIGN KEY (reseller_id) REFERENCES resellers(id) ON DELETE CASCADE
-            );
-            INSERT OR IGNORE INTO payments_v2 (id, link_id, reseller_id, sub_user_id, invoice_id, provider, amount_usd, charge_usd, total_usd, btc_amount, lightning_invoice, payment_request, verify_url, payer_ip, payer_location, payer_note, receiving_wallet, status, paid_at, expires_at, seller_checked, created_at)
-            SELECT id, link_id, reseller_id, sub_user_id, invoice_id, provider, amount_usd, charge_usd, total_usd, btc_amount, lightning_invoice, payment_request, verify_url, payer_ip, payer_location, payer_note, receiving_wallet, status, paid_at, expires_at, seller_checked, created_at
-            FROM payments;
-            DROP TABLE payments;
-            ALTER TABLE payments_v2 RENAME TO payments;
-            PRAGMA foreign_keys = ON;
-        `);
-    } catch (_) {}
+    // Resellers migrations
+    ensureColumn('resellers', 'role', "TEXT DEFAULT 'reseller'");
+    ensureColumn('resellers', 'blink_api_keys', 'TEXT');
+    ensureColumn('resellers', 'lnbits_url', 'TEXT');
+    ensureColumn('resellers', 'lnbits_invoice_key', 'TEXT');
+    ensureColumn('resellers', 'lnbits_admin_key', 'TEXT');
+    ensureColumn('resellers', 'blink_api_key', 'TEXT');
+    ensureColumn('resellers', 'blink_wallet_id', 'TEXT');
+    ensureColumn('resellers', 'alby_nwc_string', 'TEXT');
+    ensureColumn('resellers', 'alby_access_token', 'TEXT');
+    ensureColumn('resellers', 'alby_webhook_secret', 'TEXT');
+    ensureColumn('resellers', 'binance_api_key', 'TEXT');
+    ensureColumn('resellers', 'binance_api_secret', 'TEXT');
+    ensureColumn('resellers', 'binance_auto_sweep_enabled', 'INTEGER DEFAULT 0');
+    ensureColumn('resellers', 'binance_sweep_threshold_usd', 'REAL DEFAULT 0');
+    ensureColumn('resellers', 'binance_sweep_type', "TEXT DEFAULT 'lightning'");
+    ensureColumn('resellers', 'auto_payout_enabled', 'INTEGER DEFAULT 0');
+    ensureColumn('resellers', 'auto_payout_address', 'TEXT');
+    ensureColumn('resellers', 'auto_payout_percent', 'REAL DEFAULT 100');
+    ensureColumn('resellers', 'telegram_bot_token', 'TEXT');
+    ensureColumn('resellers', 'telegram_chat_id', 'TEXT');
+    ensureColumn('resellers', 'binance_sweep_wallet_balance_enabled', 'INTEGER DEFAULT 0');
+    ensureColumn('resellers', 'must_change_password', 'INTEGER DEFAULT 0');
+
+    // Sub-users migrations
+    ensureColumn('sub_users', 'must_change_password', 'INTEGER DEFAULT 0');
+    ensureColumn('sub_users', 'rate_per_dollar', 'REAL DEFAULT 1.0');
+
+    // Payment links migrations
+    ensureColumn('payment_links', 'sub_user_id', 'INTEGER');
+
+    // Payments migrations
+    ensureColumn('payments', 'sub_user_id', 'INTEGER');
+    ensureColumn('payments', 'provider', "TEXT DEFAULT 'email'");
+    ensureColumn('payments', 'verify_url', 'TEXT');
+    ensureColumn('payments', 'payer_location', 'TEXT');
+    ensureColumn('payments', 'payer_note', 'TEXT');
+    ensureColumn('payments', 'receiving_wallet', 'TEXT');
+    ensureColumn('payments', 'seller_checked', 'INTEGER DEFAULT 0');
 
     // Seed default Owner and Reseller accounts ONLY if they do not already exist (preserves changed passwords)
     try {
