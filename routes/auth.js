@@ -67,7 +67,6 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
         }
 
         if (!userObj) return res.status(401).json({ error: 'Invalid credentials' });
-
         const valid = await bcrypt.compare(cleanPass, userObj.password);
         if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
@@ -75,7 +74,6 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
         const ip = req.clientIp || req.ip;
         let trustedBrowserValid = false;
 
-        // Reseller/owner trusted browser lookup. Sub-users do not use this 2FA flow.
         if (!isSubUser && userObj.totp_enabled && userObj.totp_secret && req.cookies?.[TRUST_COOKIE]) {
             const trustHash = sha256(req.cookies[TRUST_COOKIE]);
             const [trustedRows] = await db.query(
@@ -93,7 +91,6 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
             }
         }
 
-        // 2FA is required only if this browser is not already trusted.
         if (!isSubUser && userObj.totp_enabled && userObj.totp_secret && !trustedBrowserValid) {
             const { totp_code } = req.body;
             if (!totp_code) {
@@ -110,11 +107,11 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
             if (req.body.trust_browser === true || req.body.trust_browser === 'true') {
                 const rawTrustToken = crypto.randomBytes(48).toString('base64url');
                 const trustHash = sha256(rawTrustToken);
-                const expiresAt = new Date(Date.now() + TRUST_DAYS * 24 * 60 * 60 * 1000);
+                const trustExpiresAt = new Date(Date.now() + TRUST_DAYS * 24 * 60 * 60 * 1000);
                 await db.query(
                     `INSERT INTO trusted_devices (reseller_id, token_hash, label, ip, user_agent, device_type, expires_at)
                      VALUES (?,?,?,?,?,?,?)`,
-                    [userObj.id, trustHash, browserLabel(ua), ip, ua, deviceTypeFromUa(ua), expiresAt]
+                    [userObj.id, trustHash, browserLabel(ua), ip, ua, deviceTypeFromUa(ua), trustExpiresAt]
                 );
                 res.cookie(TRUST_COOKIE, rawTrustToken, {
                     httpOnly: true,
@@ -136,10 +133,12 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
         const tokenHash = sha256(token);
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
         const resellerId = isSubUser ? userObj.reseller_id : userObj.id;
+        const accountType = isSubUser ? 'sub_user' : 'reseller';
+        const accountId = userObj.id;
 
         await db.query(
-            'INSERT INTO sessions (reseller_id, token_hash, ip, user_agent, device_type, expires_at) VALUES (?,?,?,?,?,?)',
-            [resellerId, tokenHash, ip, ua, deviceTypeFromUa(ua), expiresAt]
+            'INSERT INTO sessions (reseller_id, account_type, account_id, token_hash, ip, user_agent, device_type, expires_at) VALUES (?,?,?,?,?,?,?,?)',
+            [resellerId, accountType, accountId, tokenHash, ip, ua, deviceTypeFromUa(ua), expiresAt]
         );
 
         await db.query(
@@ -172,7 +171,6 @@ router.post('/api/auth/logout', async (req, res) => {
         const tokenHash = sha256(token);
         await db.query('DELETE FROM sessions WHERE token_hash = ?', [tokenHash]).catch(() => {});
     }
-    // Deliberately keep trusted_browser cookie. Logout ends the session but the browser remains trusted.
     res.clearCookie('auth_token');
     res.json({ success: true });
 });
