@@ -9,10 +9,6 @@ const crypto = require('crypto');
 const axios = require('axios');
 const InvoiceChecker = require('./services/invoiceChecker');
 
-// cPanel/Passenger does not always inherit .env values. Keep an explicit
-// JWT_SECRET if one is configured, otherwise create a persistent local secret
-// so a missing environment variable cannot crash the entire Node application.
-// The generated secret is stored outside version control and survives restarts.
 function loadJwtSecret() {
     if (process.env.JWT_SECRET && process.env.JWT_SECRET.trim()) {
         return process.env.JWT_SECRET.trim();
@@ -37,8 +33,6 @@ function loadJwtSecret() {
         return generated;
     } catch (err) {
         console.error('[security] Unable to create a persistent JWT secret:', err.message);
-        // Last-resort process-local secret prevents an immediate cPanel 503.
-        // Sessions/tokens will invalidate after a process restart in this rare case.
         return crypto.randomBytes(64).toString('hex');
     }
 }
@@ -93,7 +87,6 @@ const auth = require('./middleware/auth');
 const PayoutService = require('./services/payoutService');
 const { requireRole } = auth;
 
-// GET /api/me - current authenticated identity. Never expose the reseller ID to a sub-user.
 app.get('/api/me', auth, (req, res) => {
     if (req.role === 'sub_user' && req.sub_user) {
         return res.json({
@@ -120,8 +113,24 @@ app.get('/subuser*', auth, requireRole('sub_user'), (req, res) => {
     res.sendFile('subuser.html', { root: path.join(__dirname, 'public') });
 });
 
+// Reseller-only assets are injected server-side so the existing large dashboard
+// template can stay stable while mobile/session/support improvements remain isolated.
 app.get('/reseller*', auth, requireRole('reseller', 'owner'), (req, res) => {
-    res.sendFile('app.html', { root: path.join(__dirname, 'public') });
+    try {
+        const appHtmlPath = path.join(__dirname, 'public', 'app.html');
+        let html = fs.readFileSync(appHtmlPath, 'utf8');
+        if (!html.includes('/css/reseller-mobile.css')) {
+            html = html.replace('</head>', '  <link rel="stylesheet" href="/css/reseller-mobile.css?v=5">\n</head>');
+        }
+        if (!html.includes('/js/reseller-enhancements.js')) {
+            html = html.replace('</body>', '  <script src="/js/reseller-enhancements.js?v=5"></script>\n</body>');
+        }
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+        res.send(html);
+    } catch (err) {
+        console.error('[reseller] Failed to render dashboard:', err);
+        res.status(500).send('Unable to load reseller dashboard');
+    }
 });
 
 app.get('/force-password-change', auth, (req, res) => {
