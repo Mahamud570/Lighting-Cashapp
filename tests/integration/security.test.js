@@ -1,7 +1,6 @@
 /**
  * Integration Tests: routes/security.js
- * Covers: GET status (try/catch fix), TOTP disable (S-004 current_password requirement),
- *         password change (S-008 current_password requirement, 8 char minimum).
+ * Covers: security status, TOTP disable, password change, and trusted-browser invalidation.
  */
 jest.mock('../../database/db');
 jest.mock('../../middleware/auth');
@@ -23,6 +22,8 @@ const mockReseller = {
 auth.mockImplementation((req, res, next) => {
     req.reseller  = mockReseller;
     req.clientIp  = '127.0.0.1';
+    req.sessionId = 10;
+    req.tokenHash = 'current-token';
     next();
 });
 auth.requireRole = () => (req, res, next) => next();
@@ -37,19 +38,23 @@ beforeEach(() => {
     auth.mockImplementation((req, res, next) => {
         req.reseller = mockReseller;
         req.clientIp = '127.0.0.1';
+        req.sessionId = 10;
+        req.tokenHash = 'current-token';
         next();
     });
 });
 
-// ── GET /status (try/catch regression) ───────────────────────────────────────
-test('GET /api/security/status: 200 with devices and activity', async () => {
+test('GET /api/security/status: 200 with sessions, trusted browsers and activity', async () => {
     db.query
-        .mockResolvedValueOnce([[{ id: 's1', ip: '1.2.3.4', device_type: 'desktop' }]])
+        .mockResolvedValueOnce([[{ id: 10, ip: '1.2.3.4', device_type: 'desktop' }]])
+        .mockResolvedValueOnce([[{ id: 3, label: 'Chrome on Windows', ip: '1.2.3.4' }]])
         .mockResolvedValueOnce([[{ event: 'login', actor: 'alice', ip: '1.2.3.4' }]]);
     const res = await request(app).get('/api/security/status');
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('devices');
+    expect(res.body).toHaveProperty('trusted_browsers');
     expect(res.body).toHaveProperty('activity');
+    expect(res.body.current_session_id).toBe(10);
     expect(res.body.totp_enabled).toBe(true);
 });
 
@@ -60,11 +65,10 @@ test('GET /api/security/status: DB error -> 500 (not unhandled rejection)', asyn
     expect(res.body).toHaveProperty('error');
 });
 
-// ── POST /api/security/totp/disable (S-004) ───────────────────────────────────
 test('S-004: disable TOTP without current_password -> 400', async () => {
     const res = await request(app)
         .post('/api/security/totp/disable')
-        .send({ code: '123456' }); // no current_password
+        .send({ code: '123456' });
     expect(res.status).toBe(400);
     expect(res.body.error).toContain('Current password is required');
 });
@@ -90,11 +94,12 @@ test('S-004: disable TOTP with wrong TOTP code -> 400', async () => {
     expect(res.body.error).toContain('Invalid 2FA code');
 });
 
-test('S-004: disable TOTP with correct password + valid code -> 200', async () => {
+test('S-004: disable TOTP with correct password + valid code -> 200 and revokes saved browsers', async () => {
     db.query
         .mockResolvedValueOnce([[{ password: '$2a$12$hashed' }]])
-        .mockResolvedValueOnce([[]])  // UPDATE totp
-        .mockResolvedValueOnce([[]]); // INSERT activity
+        .mockResolvedValueOnce([{ affectedRows: 1 }])
+        .mockResolvedValueOnce([{ affectedRows: 2 }])
+        .mockResolvedValueOnce([{ affectedRows: 1 }]);
     bcrypt.compare.mockResolvedValueOnce(true);
     speakeasy.totp.verify.mockReturnValue(true);
     const res = await request(app)
@@ -102,9 +107,9 @@ test('S-004: disable TOTP with correct password + valid code -> 200', async () =
         .send({ code: '123456', current_password: 'correct_password' });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+    expect(db.query).toHaveBeenCalledWith('DELETE FROM trusted_devices WHERE reseller_id = ?', [1]);
 });
 
-// ── POST /api/security/password (S-008) ───────────────────────────────────────
 test('S-008: password change without current_password -> 400', async () => {
     const res = await request(app)
         .post('/api/security/password')
@@ -146,11 +151,13 @@ test('S-008: same new and current password -> 400', async () => {
     expect(res.body.error).toContain('differ from current');
 });
 
-test('S-008: valid password change -> 200', async () => {
+test('S-008: valid password change -> 200, revokes other sessions and saved browsers', async () => {
     db.query
         .mockResolvedValueOnce([[{ password: '$2a$12$hashed' }]])
-        .mockResolvedValueOnce([[]])  // UPDATE password
-        .mockResolvedValueOnce([[]]); // INSERT activity
+        .mockResolvedValueOnce([{ affectedRows: 1 }])
+        .mockResolvedValueOnce([{ affectedRows: 1 }])
+        .mockResolvedValueOnce([{ affectedRows: 1 }])
+        .mockResolvedValueOnce([{ affectedRows: 1 }]);
     bcrypt.compare.mockResolvedValueOnce(true);
     bcrypt.hash.mockResolvedValueOnce('$2a$12$newhash');
     const res = await request(app)
@@ -158,4 +165,9 @@ test('S-008: valid password change -> 200', async () => {
         .send({ current_password: 'OldPass1!', new_password: 'NewPass123!', confirm_password: 'NewPass123!' });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+    expect(db.query).toHaveBeenCalledWith(
+        'DELETE FROM sessions WHERE account_type = ? AND account_id = ? AND token_hash != ?',
+        ['reseller', 1, 'current-token']
+    );
+    expect(db.query).toHaveBeenCalledWith('DELETE FROM trusted_devices WHERE reseller_id = ?', [1]);
 });
