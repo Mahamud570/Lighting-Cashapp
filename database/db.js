@@ -1,9 +1,6 @@
 /**
  * SQLite adapter using sql.js (pure JavaScript/WebAssembly - NO native binaries).
  * Drop-in replacement for the sqlite3-based adapter.
- * Mimics the mysql2 promise pool API.
- * All routes use: const [rows] = await db.query(sql, params)
- *                 const [result] = await db.query(INSERT...) → result.insertId
  */
 const initSqlJs = require('sql.js');
 const path = require('path');
@@ -11,27 +8,28 @@ const fs = require('fs');
 
 const dataDir = path.join(__dirname, '../data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-
 const dbPath = path.join(dataDir, 'lightning_pay.db');
 
 let db = null;
 
-// Persist the in-memory database back to disk after writes
 function saveToDisk() {
     if (!db) return;
     try {
         const data = db.export();
         fs.writeFileSync(dbPath, Buffer.from(data));
     } catch (err) {
-        console.error('[db] Error saving to disk:', err.message);
+        console.error('[db] Error saving to disk', {
+            message: err && err.message ? err.message : String(err),
+            code: err && err.code ? err.code : undefined,
+            path: dbPath,
+            stack: err && err.stack ? err.stack : undefined
+        });
     }
 }
 
-// Initialize database schema and migrations
 async function initDb() {
     const SQL = await initSqlJs();
 
-    // Load existing database file if it exists, otherwise start fresh
     if (fs.existsSync(dbPath)) {
         const fileBuffer = fs.readFileSync(dbPath);
         db = new SQL.Database(fileBuffer);
@@ -42,38 +40,29 @@ async function initDb() {
     db.run('PRAGMA foreign_keys = ON');
     db.run('PRAGMA synchronous = NORMAL');
 
-    // Run schema file
     const schemaPath = path.join(__dirname, 'schema.sql');
     if (fs.existsSync(schemaPath)) {
         const schema = fs.readFileSync(schemaPath, 'utf8');
         try {
             db.run(schema);
         } catch (e) {
-            // Fallback for statements if tables already exist
-            const statements = schema
-                .split(';')
-                .map(s => s.trim())
-                .filter(s => s.length > 0 && !s.startsWith('--'));
+            const statements = schema.split(';').map(s => s.trim()).filter(s => s.length > 0 && !s.startsWith('--'));
             for (const stmt of statements) {
                 try { db.run(stmt); } catch (_) {}
             }
         }
     }
 
-    // Ensure all dynamic columns exist across tables
     function ensureColumn(tableName, columnName, columnDef) {
         try {
             const info = db.exec(`PRAGMA table_info(${tableName})`);
             if (info && info[0] && info[0].values) {
                 const cols = info[0].values.map(v => v[1]);
-                if (!cols.includes(columnName)) {
-                    db.run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDef}`);
-                }
+                if (!cols.includes(columnName)) db.run(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDef}`);
             }
         } catch (_) {}
     }
 
-    // Resellers migrations
     ensureColumn('resellers', 'role', "TEXT DEFAULT 'reseller'");
     ensureColumn('resellers', 'blink_api_keys', 'TEXT');
     ensureColumn('resellers', 'lnbits_url', 'TEXT');
@@ -97,14 +86,9 @@ async function initDb() {
     ensureColumn('resellers', 'binance_sweep_wallet_balance_enabled', 'INTEGER DEFAULT 0');
     ensureColumn('resellers', 'must_change_password', 'INTEGER DEFAULT 0');
 
-    // Sub-users migrations
     ensureColumn('sub_users', 'must_change_password', 'INTEGER DEFAULT 0');
     ensureColumn('sub_users', 'rate_per_dollar', 'REAL DEFAULT 1.0');
-
-    // Payment links migrations
     ensureColumn('payment_links', 'sub_user_id', 'INTEGER');
-
-    // Payments migrations
     ensureColumn('payments', 'sub_user_id', 'INTEGER');
     ensureColumn('payments', 'provider', "TEXT DEFAULT 'email'");
     ensureColumn('payments', 'verify_url', 'TEXT');
@@ -113,54 +97,69 @@ async function initDb() {
     ensureColumn('payments', 'receiving_wallet', 'TEXT');
     ensureColumn('payments', 'seller_checked', 'INTEGER DEFAULT 0');
 
-    // Seed default Owner and Reseller accounts ONLY if they do not already exist (preserves changed passwords)
+    // New logins explicitly stamp their real account identity. Legacy sessions are
+    // intentionally left unclassified so an old sub-user session can never appear
+    // as a reseller session in the new Sessions & Browsers UI.
+    ensureColumn('sessions', 'account_type', 'TEXT');
+    ensureColumn('sessions', 'account_id', 'INTEGER');
+
+    db.run(`CREATE TABLE IF NOT EXISTS trusted_devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        reseller_id INTEGER NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        label TEXT,
+        ip TEXT,
+        user_agent TEXT,
+        device_type TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_used DATETIME DEFAULT CURRENT_TIMESTAMP,
+        expires_at DATETIME NOT NULL,
+        revoked_at DATETIME,
+        FOREIGN KEY (reseller_id) REFERENCES resellers(id) ON DELETE CASCADE
+    )`);
+    db.run('CREATE INDEX IF NOT EXISTS idx_trusted_devices_owner ON trusted_devices(reseller_id, expires_at)');
+    db.run('CREATE INDEX IF NOT EXISTS idx_sessions_owner ON sessions(account_type, account_id, expires_at)');
+
     try {
         const bcrypt = require('bcryptjs');
         const adminHash = bcrypt.hashSync('admin123', 10);
         const resellerHash = bcrypt.hashSync('reseller123', 10);
-
-        // 1. Owner account (admin / admin123) — only inserted if absent
+        const isTest = process.env.NODE_ENV === 'test';
         try {
             db.run(`INSERT INTO resellers (username, email, password, role, status, must_change_password)
                     VALUES ('admin', 'admin@lightningpay.local', '${adminHash}', 'owner', 'active', 0)
-                    ON CONFLICT(username) DO NOTHING`);
+                    ON CONFLICT(username) DO ${isTest ? `UPDATE SET password='${adminHash}', role='owner', status='active', totp_enabled=0, totp_secret=NULL, must_change_password=0` : 'NOTHING'}`);
         } catch (_) {}
-
-        // 2. Reseller account (reseller / reseller123) — only inserted if absent
         try {
             db.run(`INSERT INTO resellers (username, email, password, role, status, must_change_password)
                     VALUES ('reseller', 'reseller@lightningpay.local', '${resellerHash}', 'reseller', 'active', 0)
-                    ON CONFLICT(username) DO NOTHING`);
+                    ON CONFLICT(username) DO ${isTest ? `UPDATE SET password='${resellerHash}', role='reseller', status='active', totp_enabled=0, totp_secret=NULL, must_change_password=0` : 'NOTHING'}`);
         } catch (_) {}
     } catch (e) {
-        console.error('[db] Seed account warning:', e.message);
+        if (process.env.NODE_ENV !== 'test') console.error('[db] Seed account warning:', e.message);
     }
 
     saveToDisk();
-    console.log('✅ SQLite (sql.js WASM) database initialized successfully.');
+    if (process.env.NODE_ENV !== 'test') console.log('✅ SQLite (sql.js WASM) database initialized successfully.');
 }
 
-// Keep a reference to the init promise so query() can await it
 const dbInitPromise = initDb().catch(err => {
-    console.error('❌ SQLite initialization error:', err.message);
+    console.error('❌ SQLite initialization error:', err && err.stack ? err.stack : err);
     process.exit(1);
 });
 
-/**
- * Convert MySQL-style SQL / functions to SQLite equivalents.
- */
 function convertSql(sql) {
     return sql
-        .replace(/DATE_SUB\(NOW\(\),\s*INTERVAL\s+(\d+)\s+DAY\)/gi,    "datetime('now', '-$1 days')")
+        .replace(/DATE_SUB\(NOW\(\),\s*INTERVAL\s+(\d+)\s+DAY\)/gi, "datetime('now', '-$1 days')")
         .replace(/DATE_SUB\(NOW\(\),\s*INTERVAL\s+(\d+)\s+MINUTE\)/gi, "datetime('now', '-$1 minutes')")
         .replace(/DATE_ADD\(NOW\(\),\s*INTERVAL\s+(\d+)\s+MINUTE\)/gi, "datetime('now', '+$1 minutes')")
-        .replace(/DATE_ADD\(NOW\(\),\s*INTERVAL\s+(\d+)\s+DAY\)/gi,    "datetime('now', '+$1 days')")
-        .replace(/\bNOW\(\)/gi,                                         "datetime('now')")
-        .replace(/datetime\("([^"]+)"\)/gi,                             "datetime('$1')")
-        .replace(/\bDATE\(([^)]+)\)/gi,                                 "date($1)")
-        .replace(/=\s*"([a-zA-Z0-9_-]+)"/g,                            "= '$1'")
-        .replace(/!=\s*"([a-zA-Z0-9_-]+)"/g,                           "!= '$1'")
-        .replace(/^INSERT IGNORE /i,                                    'INSERT OR IGNORE ');
+        .replace(/DATE_ADD\(NOW\(\),\s*INTERVAL\s+(\d+)\s+DAY\)/gi, "datetime('now', '+$1 days')")
+        .replace(/\bNOW\(\)/gi, "datetime('now')")
+        .replace(/datetime\("([^"]+)"\)/gi, "datetime('$1')")
+        .replace(/\bDATE\(([^)]+)\)/gi, 'date($1)')
+        .replace(/=\s*"([a-zA-Z0-9_-]+)"/g, "= '$1'")
+        .replace(/!=\s*"([a-zA-Z0-9_-]+)"/g, "!= '$1'")
+        .replace(/^INSERT IGNORE /i, 'INSERT OR IGNORE ');
 }
 
 function sanitizeParam(p) {
@@ -169,21 +168,11 @@ function sanitizeParam(p) {
 }
 
 const pool = {
-    /**
-     * Executes a SQL query.
-     * Returns [rows, []]                         for SELECT / PRAGMA / WITH
-     * Returns [{ insertId, affectedRows }, []]   for INSERT / UPDATE / DELETE
-     */
     query: async (sql, params = []) => {
-        // Ensure db is fully initialized before any query
         await dbInitPromise;
-
         const converted = convertSql(sql);
         const upper = converted.trim().toUpperCase();
-        const isSelect = upper.startsWith('SELECT') ||
-                         upper.startsWith('PRAGMA') ||
-                         upper.startsWith('WITH');
-
+        const isSelect = upper.startsWith('SELECT') || upper.startsWith('PRAGMA') || upper.startsWith('WITH');
         const flatParams = (Array.isArray(params) ? params.flat() : []).map(sanitizeParam);
 
         if (isSelect) {
@@ -191,46 +180,34 @@ const pool = {
             const stmt = db.prepare(converted);
             try {
                 stmt.bind(flatParams);
-                while (stmt.step()) {
-                    rows.push(stmt.getAsObject());
-                }
+                while (stmt.step()) rows.push(stmt.getAsObject());
             } finally {
                 stmt.free();
             }
             return [rows, []];
-        } else {
-            const stmt = db.prepare(converted);
-            try {
-                stmt.run(flatParams);
-            } finally {
-                stmt.free();
-            }
-
-            // Retrieve last insert ID and affected rows
-            const idResult = db.exec('SELECT last_insert_rowid()');
-            const insertId = idResult[0]?.values[0]?.[0] || 0;
-            const affectedRows = db.getRowsModified();
-
-            // Persist every write to disk so data survives restarts
-            saveToDisk();
-
-            return [{ insertId, affectedRows }, []];
         }
+
+        const stmt = db.prepare(converted);
+        try { stmt.run(flatParams); }
+        finally { stmt.free(); }
+
+        const idResult = db.exec('SELECT last_insert_rowid()');
+        const insertId = idResult[0]?.values[0]?.[0] || 0;
+        const affectedRows = db.getRowsModified();
+        saveToDisk();
+        return [{ insertId, affectedRows }, []];
     }
 };
 
-/**
- * Graceful shutdown — save and close on process exit.
- */
 const gracefulClose = () => {
     if (db) {
         saveToDisk();
         db.close();
-        console.log('[db] SQLite connection closed cleanly.');
+        if (process.env.NODE_ENV !== 'test') console.log('[db] SQLite connection closed cleanly.');
     }
 };
 process.once('SIGTERM', gracefulClose);
-process.once('SIGINT',  gracefulClose);
-process.once('exit',    gracefulClose);
+process.once('SIGINT', gracefulClose);
+process.once('exit', gracefulClose);
 
 module.exports = pool;

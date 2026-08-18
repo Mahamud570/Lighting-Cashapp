@@ -6,37 +6,20 @@
   <title>Login — Lightning Pay</title>
   <link rel="stylesheet" href="/css/app.css">
   <style>
-    body { display: flex; align-items: center; justify-content: center; min-height: 100vh; background: var(--bg-primary); position: relative; overflow: hidden; }
-    body::before {
-      content: '';
-      position: fixed;
-      top: -50%; left: -50%;
-      width: 200%; height: 200%;
-      background: radial-gradient(ellipse at 60% 40%, rgba(99,102,241,0.12) 0%, transparent 50%),
-                  radial-gradient(ellipse at 30% 70%, rgba(139,92,246,0.08) 0%, transparent 50%);
-      pointer-events: none;
-    }
-    .auth-card {
-      width: 100%;
-      max-width: 420px;
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-lg);
-      padding: 40px;
-      box-shadow: var(--shadow-lg);
-      position: relative;
-      z-index: 1;
-    }
-    .auth-logo { text-align: center; margin-bottom: 28px; }
-    .auth-logo .logo-icon { font-size: 40px; display: block; margin-bottom: 8px; }
-    .auth-logo h1 { font-size: 24px; font-weight: 800; background: linear-gradient(135deg, #fff, #94a3b8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .auth-logo p { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
-    .auth-footer { text-align: center; margin-top: 20px; font-size: 13px; color: var(--text-muted); }
-    .error-msg { display: none; }
-    .btn-auth { width: 100%; padding: 12px; font-size: 15px; }
-    .divider { text-align: center; margin: 20px 0; color: var(--text-muted); font-size: 12px; position: relative; }
-    .divider::before, .divider::after { content: ''; position: absolute; top: 50%; width: calc(50% - 20px); height: 1px; background: var(--border); }
-    .divider::before { left: 0; } .divider::after { right: 0; }
+    body { display:flex; align-items:center; justify-content:center; min-height:100vh; background:var(--bg-primary); position:relative; overflow:hidden; padding:16px; }
+    body::before { content:''; position:fixed; top:-50%; left:-50%; width:200%; height:200%; background:radial-gradient(ellipse at 60% 40%,rgba(99,102,241,.12) 0%,transparent 50%),radial-gradient(ellipse at 30% 70%,rgba(139,92,246,.08) 0%,transparent 50%); pointer-events:none; }
+    .auth-card { width:100%; max-width:420px; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-lg); padding:40px; box-shadow:var(--shadow-lg); position:relative; z-index:1; }
+    .auth-logo { text-align:center; margin-bottom:28px; }
+    .auth-logo .logo-icon { font-size:40px; display:block; margin-bottom:8px; }
+    .auth-logo h1 { font-size:24px; font-weight:800; background:linear-gradient(135deg,#fff,#94a3b8); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+    .auth-logo p { font-size:13px; color:var(--text-muted); margin-top:4px; }
+    .error-msg { display:none; }
+    .btn-auth { width:100%; padding:12px; font-size:15px; }
+    .trust-browser { display:flex; align-items:flex-start; gap:10px; padding:12px 14px; border:1px solid var(--border); background:rgba(255,255,255,.025); border-radius:10px; margin-top:12px; cursor:pointer; }
+    .trust-browser input { width:18px; height:18px; margin-top:2px; accent-color:var(--accent); flex:none; }
+    .trust-browser strong { display:block; font-size:13px; color:var(--text-primary); }
+    .trust-browser span { display:block; font-size:11px; color:var(--text-muted); margin-top:2px; line-height:1.45; }
+    @media(max-width:480px){ .auth-card{padding:26px 18px;border-radius:14px}.auth-logo{margin-bottom:22px}.auth-logo h1{font-size:22px}.form-control{font-size:16px}.btn-auth{min-height:46px}.trust-browser{padding:11px 12px} }
   </style>
 </head>
 <body>
@@ -51,11 +34,11 @@
 
   <div class="form-group">
     <label class="form-label">Username or Email</label>
-    <input class="form-control" type="text" id="username" placeholder="username or email@domain.com" autofocus>
+    <input class="form-control" type="text" id="username" placeholder="username or email@domain.com" autocomplete="username" autofocus>
   </div>
   <div class="form-group">
     <label class="form-label">Password</label>
-    <input class="form-control" type="password" id="password" placeholder="Your password" onkeydown="if(event.key==='Enter')login()">
+    <input class="form-control" type="password" id="password" placeholder="Your password" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()">
   </div>
 
   <button class="btn btn-primary btn-auth" id="loginBtn" onclick="login()">⚡ Sign In</button>
@@ -69,10 +52,9 @@ async function login() {
     const password = document.getElementById('password').value;
     const btn = document.getElementById('loginBtn');
     const err = document.getElementById('errorMsg');
-    
-    // Check if 2FA view is active
     const totpCodeInput = document.getElementById('totpCode');
     const totp_code = totpCodeInput ? totpCodeInput.value.trim() : null;
+    const trustInput = document.getElementById('trustBrowser');
 
     if (!username || !password) {
         err.textContent = 'Please enter your username and password';
@@ -86,37 +68,41 @@ async function login() {
 
     try {
         const payload = { username, password };
-        if (totp_code) payload.totp_code = totp_code;
+        if (totp_code) {
+            payload.totp_code = totp_code;
+            payload.trust_browser = !!(trustInput && trustInput.checked);
+        }
 
         const resp = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify(payload)
         });
+
         let data = {};
-        try {
-            data = await resp.json();
-        } catch (jsonErr) {
-            data = { error: 'Server returned status ' + resp.status + '. Please retry.' };
-        }
+        try { data = await resp.json(); }
+        catch (_) { data = { error: 'Server returned status ' + resp.status + '. Please retry.' }; }
 
         if (data.requires_2fa) {
-            // Transform login card to 2FA view
-            const formFields = document.querySelectorAll('.form-group');
-            formFields.forEach(f => f.style.display = 'none');
-            
+            document.querySelectorAll('.form-group').forEach(f => f.style.display = 'none');
             let twofaGroup = document.getElementById('twofaGroup');
             if (!twofaGroup) {
                 twofaGroup = document.createElement('div');
                 twofaGroup.id = 'twofaGroup';
                 twofaGroup.className = 'form-group';
+                twofaGroup.style.display = 'block';
                 twofaGroup.innerHTML = `
                     <label class="form-label" style="color:var(--accent);">🔒 Two-Factor Auth Code</label>
-                    <input class="form-control" type="text" id="totpCode" placeholder="6-digit code" maxlength="6" style="letter-spacing:6px;font-size:20px;text-align:center;" autofocus onkeydown="if(event.key==='Enter')login()">
+                    <input class="form-control" type="text" inputmode="numeric" autocomplete="one-time-code" id="totpCode" placeholder="6-digit code" maxlength="6" style="letter-spacing:6px;font-size:20px;text-align:center;" onkeydown="if(event.key==='Enter')login()">
+                    <label class="trust-browser">
+                      <input type="checkbox" id="trustBrowser" checked>
+                      <span><strong>Trust this browser</strong><span>Skip 2FA on this saved browser for 30 days. You can remove it later from Sessions & Browsers.</span></span>
+                    </label>
                 `;
                 btn.parentNode.insertBefore(twofaGroup, btn);
+                setTimeout(() => document.getElementById('totpCode')?.focus(), 20);
             }
-            
             btn.disabled = false;
             btn.textContent = '🔑 Verify & Sign In';
             return;

@@ -99,9 +99,8 @@ const authMiddleware = async (req, res, next) => {
 
         req.token = token;
         req.tokenHash = tokenHash;
+        req.sessionId = sessions[0].id;
 
-        // Sub-users never receive the reseller/owner forced-password workflow.
-        // Resellers/owners retain the existing security policy.
         if (req.role !== 'sub_user' && req.reseller.must_change_password === 1) {
             const allowedPaths = ['/force-password-change', '/api/security/password', '/api/auth/logout'];
             if (!allowedPaths.includes(req.path)) {
