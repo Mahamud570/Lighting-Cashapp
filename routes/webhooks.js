@@ -191,21 +191,30 @@ router.post('/api/webhooks/btcpay', async (req, res) => {
             return res.status(404).json({ error: 'Pending payment not found' });
         }
 
-        // Verify BTCPay signature header if btcpay_webhook_secret is configured
-        if (payment.btcpay_webhook_secret) {
-            const btcpaySig = req.headers['btcpay-sig'];
-            if (!btcpaySig) {
-                return res.status(401).json({ error: 'Missing BTCPay signature header' });
-            }
-            const rawBody = JSON.stringify(req.body);
-            const expectedSig = 'sha256=' + crypto.createHmac('sha256', payment.btcpay_webhook_secret).update(rawBody).digest('hex');
-            if (btcpaySig !== expectedSig) {
-                return res.status(401).json({ error: 'Invalid BTCPay webhook signature' });
-            }
+        // BTCPay webhook authentication is mandatory. Never accept a webhook
+        // solely because the request body claims the invoice is settled.
+        const webhookSecret = payment.btcpay_webhook_secret;
+        const btcpaySig = req.headers['btcpay-sig'];
+        if (!webhookSecret || !btcpaySig) {
+            return res.status(401).json({ error: 'Missing BTCPay webhook authentication credentials' });
+        }
+
+        const rawBody = JSON.stringify(req.body);
+        const expectedSig = 'sha256=' + crypto.createHmac('sha256', webhookSecret).update(rawBody).digest('hex');
+        const received = String(btcpaySig).trim();
+        const expected = expectedSig.trim();
+        if (received.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(received), Buffer.from(expected))) {
+            return res.status(401).json({ error: 'Invalid BTCPay webhook signature' });
         }
 
         if (body.type !== 'InvoiceSettled' && body.type !== 'InvoicePaymentSettled' && body.status !== 'Settled') {
             return res.status(400).json({ error: 'Invoice not settled' });
+        }
+
+        // Confirm the invoice against BTCPay/node state before settlement.
+        const check = await InvoiceChecker.check(payment);
+        if (!check.paid) {
+            return res.status(400).json({ error: 'Payment not confirmed on BTCPay' });
         }
 
         await handlePaymentSuccess(payment, req.app.get('io'), 'btcpay', body);
