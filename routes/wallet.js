@@ -87,16 +87,21 @@ router.post('/api/wallet/email', auth, async (req, res) => {
 router.post('/api/wallet/lnbits', auth, async (req, res) => {
     try {
         const { url, invoice_key, admin_key } = req.body;
-        if (!invoice_key) return res.status(400).json({ error: 'LNbits Invoice/Read Key is required' });
+        const [rows] = await db.query('SELECT lnbits_url, lnbits_invoice_key, lnbits_admin_key FROM resellers WHERE id = ?', [req.reseller.id]);
+        const dbRow = rows[0] || {};
 
-        const targetUrl = url ? url.trim() : 'https://legend.lnbits.com';
+        const targetUrl = url ? url.trim() : (dbRow.lnbits_url || 'https://legend.lnbits.com');
+        const key = (invoice_key && !invoice_key.startsWith('***')) ? invoice_key.trim() : dbRow.lnbits_invoice_key;
+        const targetAdminKey = (admin_key && !admin_key.startsWith('***')) ? admin_key.trim() : (admin_key ? dbRow.lnbits_admin_key : null);
+
+        if (!key) return res.status(400).json({ error: 'LNbits Invoice/Read Key is required' });
 
         // Test connection
-        await LNbitsService.getWalletDetails({ url: targetUrl, invoiceKey: invoice_key.trim() });
+        await LNbitsService.getWalletDetails({ url: targetUrl, invoiceKey: key });
 
         await db.query(
             `UPDATE resellers SET wallet_type = "lnbits", lnbits_url = ?, lnbits_invoice_key = ?, lnbits_admin_key = ? WHERE id = ?`,
-            [targetUrl, invoice_key.trim(), admin_key ? admin_key.trim() : null, req.reseller.id]
+            [targetUrl, key, targetAdminKey || null, req.reseller.id]
         );
 
         res.json({ success: true, message: 'LNbits wallet connected successfully' });
