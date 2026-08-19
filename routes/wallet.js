@@ -208,6 +208,70 @@ router.post('/api/wallet/alby/test', auth, async (req, res) => {
     }
 });
 
+// POST /api/wallet/blink/test
+router.post('/api/wallet/blink/test', auth, async (req, res) => {
+    try {
+        const { api_key, api_keys } = req.body;
+        const [rows] = await db.query('SELECT blink_api_key, blink_api_keys, blink_wallet_id FROM resellers WHERE id = ?', [req.reseller.id]);
+        const dbRow = rows[0] || {};
+
+        const key = (api_key && !api_key.startsWith('***')) ? api_key.trim() : dbRow.blink_api_key;
+        if (!key && !api_keys) {
+            return res.status(400).json({ error: 'Blink API key is required to test.' });
+        }
+
+        const details = await BlinkService.getWalletDetails({ apiKey: key });
+        const keys = BlinkService.parseApiKeys(key, api_keys);
+
+        res.json({
+            success: true,
+            message: `Blink Connected: ${details.username}`,
+            data: {
+                ...details,
+                key_count: keys.length
+            }
+        });
+    } catch (err) {
+        res.status(400).json({ error: 'Blink Connection Failed: ' + (err.response?.data?.message || err.message) });
+    }
+});
+
+// POST /api/wallet/blink - save Blink / Lightning Node Pool
+router.post('/api/wallet/blink', auth, async (req, res) => {
+    try {
+        const { api_key, api_keys, wallet_id } = req.body;
+        const [rows] = await db.query('SELECT blink_api_key, blink_api_keys, blink_wallet_id FROM resellers WHERE id = ?', [req.reseller.id]);
+        const dbRow = rows[0] || {};
+
+        const key = (api_key && !api_key.startsWith('***')) ? api_key.trim() : dbRow.blink_api_key;
+        if (!key) {
+            return res.status(400).json({ error: 'Blink API key is required' });
+        }
+
+        const details = await BlinkService.getWalletDetails({ apiKey: key });
+        const targetWalletId = wallet_id ? wallet_id.trim() : (details.wallet_id || dbRow.blink_wallet_id);
+
+        let cleanKeysJson = null;
+        if (api_keys) {
+            const parsed = BlinkService.parseApiKeys(key, api_keys);
+            cleanKeysJson = JSON.stringify(parsed);
+        }
+
+        await db.query(
+            `UPDATE resellers SET wallet_type = "blink", blink_api_key = ?, blink_api_keys = ?, blink_wallet_id = ? WHERE id = ?`,
+            [key, cleanKeysJson, targetWalletId, req.reseller.id]
+        );
+
+        res.json({
+            success: true,
+            message: 'Lightning Node Pool connected successfully',
+            data: { wallet_id: targetWalletId }
+        });
+    } catch (err) {
+        res.status(400).json({ error: 'Blink Connection Failed: ' + (err.response?.data?.message || err.message) });
+    }
+});
+
 // POST /api/wallet/opennode/test
 router.post('/api/wallet/opennode/test', auth, async (req, res) => {
     try {
@@ -229,6 +293,29 @@ router.post('/api/wallet/opennode/test', auth, async (req, res) => {
         res.json({ success: true, message: 'OpenNode API Connected Successfully', data: resp.data?.data || {} });
     } catch (e) {
         res.status(400).json({ error: 'OpenNode Test Failed: ' + (e.response?.data?.message || e.message) });
+    }
+});
+
+// POST /api/wallet/opennode - save OpenNode
+router.post('/api/wallet/opennode', auth, async (req, res) => {
+    try {
+        const { api_key, env } = req.body;
+        const [rows] = await db.query('SELECT opennode_api_key, opennode_env FROM resellers WHERE id = ?', [req.reseller.id]);
+        const dbRow = rows[0] || {};
+
+        const key = (api_key && !api_key.startsWith('***')) ? api_key.trim() : dbRow.opennode_api_key;
+        const environment = env || dbRow.opennode_env || 'live';
+
+        if (!key) return res.status(400).json({ error: 'OpenNode API key is required' });
+
+        await db.query(
+            `UPDATE resellers SET wallet_type = "opennode", opennode_api_key = ?, opennode_env = ? WHERE id = ?`,
+            [key, environment, req.reseller.id]
+        );
+
+        res.json({ success: true, message: 'OpenNode wallet saved successfully' });
+    } catch (err) {
+        res.status(400).json({ error: 'OpenNode Save Failed: ' + err.message });
     }
 });
 
@@ -259,6 +346,32 @@ router.post('/api/wallet/btcpay/test', auth, async (req, res) => {
         });
     } catch (err) {
         res.status(400).json({ error: 'BTCPay Test Failed: ' + (err.response?.data?.message || err.message) });
+    }
+});
+
+// POST /api/wallet/btcpay - save BTCPay
+router.post('/api/wallet/btcpay', auth, async (req, res) => {
+    try {
+        const { url, store_id, api_key, webhook_id } = req.body;
+        const [rows] = await db.query('SELECT btcpay_url, btcpay_store_id, btcpay_api_key, btcpay_webhook_id FROM resellers WHERE id = ?', [req.reseller.id]);
+        const dbRow = rows[0] || {};
+
+        const targetUrl = url ? url.trim().replace(/\/+$/, '') : (dbRow.btcpay_url || '');
+        const storeId = store_id ? store_id.trim() : (dbRow.btcpay_store_id || '');
+        const key = (api_key && !api_key.startsWith('***')) ? api_key.trim() : (dbRow.btcpay_api_key || '');
+
+        if (!targetUrl || !storeId || !key) {
+            return res.status(400).json({ error: 'BTCPay Server URL, Store ID, and API Key are required' });
+        }
+
+        await db.query(
+            `UPDATE resellers SET wallet_type = "btcpay", btcpay_url = ?, btcpay_store_id = ?, btcpay_api_key = ?, btcpay_webhook_id = ? WHERE id = ?`,
+            [targetUrl, storeId, key, webhook_id || dbRow.btcpay_webhook_id || null, req.reseller.id]
+        );
+
+        res.json({ success: true, message: 'BTCPay Server saved successfully' });
+    } catch (err) {
+        res.status(400).json({ error: 'BTCPay Save Failed: ' + err.message });
     }
 });
 
