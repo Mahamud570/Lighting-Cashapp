@@ -17,9 +17,9 @@ router.get('/api/dashboard/stats', auth, async (req, res) => {
 
         const [linksRows] = await db.query(`SELECT COUNT(*) as count FROM payment_links WHERE reseller_id = ?${subClause}`, params);
         const [clicksRows] = await db.query(`SELECT COALESCE(SUM(clicks),0) as total FROM payment_links WHERE reseller_id = ?${subClause}`, params);
-        const [paidRows] = await db.query(`SELECT COALESCE(SUM(total_usd),0) as total FROM payments WHERE reseller_id = ?${subClause} AND status="paid"`, params);
+        const [paidRows] = await db.query(`SELECT COALESCE(SUM(total_usd),0) as total, COUNT(*) as count FROM payments WHERE reseller_id = ?${subClause} AND status="paid"`, params);
         const [pendingRows] = await db.query(`SELECT COUNT(*) as count FROM payments WHERE reseller_id = ?${subClause} AND status="pending"`, params);
-        const [expiredRows] = await db.query(`SELECT COUNT(*) as count FROM payments WHERE reseller_id = ?${subClause} AND status="expired"`, params);
+        const [expiredRows] = await db.query(`SELECT COUNT(*) as count FROM payments WHERE reseller_id = ?${subClause} AND status="expired" AND expires_at > datetime('now', '-10 minutes')`, params);
 
         const links = linksRows[0] || { count: 0 };
         const clicks = clicksRows[0] || { total: 0 };
@@ -41,7 +41,7 @@ router.get('/api/dashboard/stats', auth, async (req, res) => {
         // Conversion rate
         const [totalInvRows] = await db.query(`SELECT COUNT(*) as count FROM payments WHERE reseller_id = ?${subClause}`, params);
         const totalInvoices = totalInvRows[0] || { count: 0 };
-        const conversion = totalInvoices.count > 0 ? Math.round((paid.total / totalInvoices.count) * 100) : 0;
+        const conversion = totalInvoices.count > 0 ? Math.round((Number(paid.count || 0) / totalInvoices.count) * 100) : 0;
 
         // Top links
         const [topLinks] = await db.query(
@@ -51,7 +51,7 @@ router.get('/api/dashboard/stats', auth, async (req, res) => {
 
         // Recent payments
         const [recentPayments] = await db.query(
-            `SELECT p.*, pl.slug, pl.title FROM payments p LEFT JOIN payment_links pl ON p.link_id = pl.id WHERE p.reseller_id = ?${pSubClause} ORDER BY p.created_at DESC LIMIT 10`,
+            `SELECT p.*, pl.slug, pl.title FROM payments p LEFT JOIN payment_links pl ON p.link_id = pl.id WHERE p.reseller_id = ?${pSubClause} AND NOT (p.status='expired' AND p.expires_at <= datetime('now', '-10 minutes')) ORDER BY p.created_at DESC LIMIT 10`,
             params
         );
 

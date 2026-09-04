@@ -9,6 +9,7 @@ function escHtml(str) {
 }
 
 const API = '';
+const PUBLIC_ORIGIN = window.location.origin.replace(/:\/\/www\./i, '://');
 let currentPage = 'dashboard';
 let allLinks = [];
 let allUsers = [];
@@ -17,6 +18,7 @@ let paymentRefreshInterval;
 let selectedChargeMode = 'none';
 let selectedProvider = null;
 let selectedTheme = 'default';
+let availableThemes = [];
 
 // ─── INIT ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -217,8 +219,15 @@ async function loadWallet() {
         const box = document.getElementById('walletStatusBox');
         if (data.wallet_type) {
             box.className = 'wallet-status-box active mb-24';
-            document.getElementById('walletStatusTitle').textContent = `ACTIVE — ${data.wallet_type.toUpperCase()}`;
-            document.getElementById('walletStatusSub').textContent = `Connected. Provider: ${data.wallet_type}`;
+            const providerLabels = {
+                email: 'LNA', lnbits: 'LNB', blink: 'LNP', alby: 'ALB / NWC',
+                opennode: 'OPN', btcpay: 'BTP'
+            };
+            const providerLabel = providerLabels[data.wallet_type] || data.wallet_type.toUpperCase();
+            document.getElementById('walletStatusTitle').textContent = `ACTIVE — ${providerLabel}`;
+            document.getElementById('walletStatusSub').textContent = data.wallet_type === 'email' && data.wallet_email
+                ? `Connected: ${data.wallet_email}`
+                : `Connected. Provider: ${providerLabel}`;
             selectProvider(data.wallet_type);
 
             // Pre-fill fields
@@ -242,6 +251,8 @@ async function loadWallet() {
             if (data.btcpay_url) document.getElementById('btcpayUrl').value = data.btcpay_url;
             if (data.btcpay_store_id) document.getElementById('btcpayStoreId').value = data.btcpay_store_id;
             if (data.btcpay_api_key) document.getElementById('btcpayKey').value = data.btcpay_api_key;
+            if (data.btcpay_webhook_id) document.getElementById('btcpayWebhookId').value = data.btcpay_webhook_id;
+            if (data.btcpay_webhook_secret) document.getElementById('btcpayWebhookSecret').value = data.btcpay_webhook_secret;
 
             // Pre-fill Binance & Payout fields
             if (document.getElementById('binanceAutoSweepToggle')) {
@@ -258,6 +269,18 @@ async function loadWallet() {
                 if (data.auto_payout_percent) document.getElementById('autoPayoutPercent').value = data.auto_payout_percent;
                 if (document.getElementById('tgChatId') && data.telegram_chat_id) document.getElementById('tgChatId').value = data.telegram_chat_id;
                 if (document.getElementById('tgBotToken') && data.telegram_bot_token) document.getElementById('tgBotToken').value = data.telegram_bot_token;
+            }
+
+            // Re-apply the saved provider after populating nested card controls.
+            // Browser label behavior can otherwise select the last-focused card.
+            selectProvider(data.wallet_type);
+
+            // Never silently present a wallet as ready after persisted secrets were
+            // removed, corrupted, or could not be restored after a restart.
+            if (Array.isArray(data.credentials_required) && data.credentials_required.length) {
+                const message = `Credentials missing: ${data.credentials_required.join(', ')}. Please re-enter and save them.`;
+                document.getElementById('walletStatusSub').textContent = message;
+                showToast(message, 'warning');
             }
         }
     } catch(e) {}
@@ -291,12 +314,12 @@ function renderTestResult(containerId, success, message) {
         el.style.background = 'rgba(0, 214, 50, 0.12)';
         el.style.border = '1px solid rgba(0, 214, 50, 0.35)';
         el.style.color = '#00d632';
-        el.innerHTML = `✅ <strong>Connected:</strong> ${message}`;
+        el.textContent = `✅ Connected: ${message}`;
     } else {
         el.style.background = 'rgba(255, 71, 87, 0.12)';
         el.style.border = '1px solid rgba(255, 71, 87, 0.35)';
         el.style.color = '#ff4757';
-        el.innerHTML = `❌ <strong>Failed:</strong> ${message}`;
+        el.textContent = `❌ Failed: ${message}`;
     }
 }
 
@@ -449,6 +472,29 @@ async function saveAlby(e) {
 }
 
 // Email
+async function testEmailWallet(e) {
+    e.stopPropagation();
+    const btn = e.currentTarget || e.target;
+    const email = document.getElementById('walletEmail').value.trim();
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Testing...';
+    try {
+        const response = await apiFetch('/api/wallet/email/test', 'POST', { email });
+        const range = response.data
+            ? ` (${Number(response.data.min_sats).toLocaleString()}–${Number(response.data.max_sats).toLocaleString()} sats)`
+            : '';
+        renderTestResult('emailTestOutput', true, `${response.message}${range}`);
+        showToast('✅ Address is valid', 'success');
+    } catch (err) {
+        renderTestResult('emailTestOutput', false, err.message);
+        showToast(err.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+    }
+}
+
 async function saveEmailWallet(e) {
     e.stopPropagation();
     const email = document.getElementById('walletEmail').value;
@@ -579,10 +625,11 @@ async function loadSweeps() {
             const typeBadges = {
                 binance_lightning: '<span class="badge badge-green">Binance LN</span>',
                 binance_onchain: '<span class="badge badge-yellow">Binance On-Chain</span>',
-                instant_ln_payout: '<span class="badge badge-purple">Instant LN Payout</span>'
+                instant_ln_payout: '<span class="badge badge-purple">Instant LN Payout</span>',
+                platform_wallet_fee: '<span class="badge badge-yellow">$0.75 Wallet Fee</span>'
             };
             const statusBadges = {
-                completed: '<span class="badge badge-green">Swept to Binance</span>',
+                completed: s.sweep_type === 'platform_wallet_fee' ? '<span class="badge badge-green">Wallet Fee Paid</span>' : '<span class="badge badge-green">Swept to Binance</span>',
                 pending: '<span class="badge badge-yellow">Pending</span>',
                 held: '<span class="badge badge-yellow" title="' + (s.error_message || 'Held in wallet') + '">Held in Wallet (Below Min)</span>',
                 failed: '<span class="badge badge-red" title="' + (s.error_message || '') + '">Failed</span>'
@@ -736,6 +783,7 @@ async function saveTelegramSettings(e) {
 async function loadThemes(targetGridId = 'themesGrid') {
     try {
         const themes = await apiFetch('/api/themes');
+        availableThemes = themes;
         document.getElementById('themeCount').textContent = themes.length;
         renderThemeGrid(themes, targetGridId);
         if (targetGridId === 'themesGrid') renderThemeGrid(themes, 'createThemeGrid');
@@ -808,7 +856,7 @@ async function loadLinks() {
 function renderLinks(links) {
     const tbody = document.getElementById('linksTable');
     if (!links.length) {
-        tbody.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🔗</div><div class="empty-text">No payment links yet</div></div></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">🔗</div><div class="empty-text">No payment links yet</div></div></td></tr>';
         return;
     }
     tbody.innerHTML = links.map(l => `
@@ -822,12 +870,14 @@ function renderLinks(links) {
           </td>
           <td><span class="badge badge-purple">${escHtml(l.theme)}</span></td>
           <td>${l.amount_type === 'fixed' ? '$' + parseFloat(l.fixed_amount).toFixed(2) : 'Open ($' + l.min_amount + '—$' + (l.max_amount ?? '∞') + ')'}</td>
+          <td>${formatLinkFee(l)}</td>
           <td>${l.clicks}</td>
           <td>${l.invoice_count || 0}</td>
           <td>${statusBadge(l.status)}</td>
           <td>
             <div class="flex gap-8">
-              <button class="btn btn-sm btn-ghost" onclick="openAssignModal(${l.id}, '${escHtml(l.slug)}', ${l.sub_user_id || 'null'})" title="Assign to Merchant / User">👤 Assign</button>
+              <button class="btn btn-sm btn-primary" onclick="openEditLinkModal(${Number(l.id)})" title="Edit link and customer fee">✏️ Edit</button>
+              <button class="btn btn-sm btn-ghost" onclick="openAssignModal(${Number(l.id)})" title="Assign to Merchant / User">👤 Assign</button>
               <button class="btn btn-sm btn-ghost" onclick="copyLink('${escHtml(l.slug)}')" title="Copy">📋</button>
               <button class="btn btn-sm ${l.status === 'active' ? 'btn-outline-red' : 'btn-outline-green'}" onclick="toggleLink(${l.id})">${l.status === 'active' ? 'Disable' : 'Enable'}</button>
               <button class="btn btn-sm btn-danger" onclick="deleteLink(${l.id})">🗑</button>
@@ -837,15 +887,94 @@ function renderLinks(links) {
     `).join('');
 }
 
-function openAssignModal(linkId, slug, currentSubUserId) {
+function formatLinkFee(link) {
+    const mode = link.charge_mode || 'inherit';
+    if (mode === 'inherit') return '<span class="badge badge-blue">Main fee</span>';
+    if (mode === 'none') return '<span class="badge">No fee</span>';
+    const value = Number(link.charge_value || 0);
+    return mode === 'percent' ? `${value.toFixed(2)}%` : `$${value.toFixed(2)}`;
+}
+
+function toggleLinkFeeFields(prefix) {
+    const mode = document.getElementById(`${prefix}ChargeMode`)?.value || 'inherit';
+    const group = document.getElementById(`${prefix}ChargeValueGroup`);
+    const label = document.getElementById(`${prefix}ChargeValueLabel`);
+    if (group) group.classList.toggle('d-none', mode === 'inherit' || mode === 'none');
+    if (label) label.textContent = mode === 'percent' ? 'Percentage Fee (%)' : 'Fixed Fee ($)';
+}
+
+function openEditLinkModal(linkId) {
+    const link = allLinks.find(item => Number(item.id) === Number(linkId));
+    if (!link) return showToast('Payment link is unavailable', 'error');
+    const themes = availableThemes.length ? availableThemes : [{ key_name: link.theme, name: link.theme }];
+    const themeOptions = themes.map(t => `<option value="${escHtml(t.key_name)}" ${t.key_name === link.theme ? 'selected' : ''}>${escHtml(t.name || t.key_name)}</option>`).join('');
+    const mode = link.charge_mode || 'inherit';
+    const html = `
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Title *</label><input class="form-control" id="editTitle" maxlength="100" value="${escHtml(link.title)}"></div>
+        <div class="form-group"><label class="form-label">Brand Name</label><input class="form-control" id="editBrand" maxlength="60" value="${escHtml(link.brand_name || 'Cash Pay')}"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Amount Type</label><select class="form-control" id="editAmountType" onchange="toggleEditAmountFields()"><option value="open" ${link.amount_type === 'open' ? 'selected' : ''}>Open amount</option><option value="fixed" ${link.amount_type === 'fixed' ? 'selected' : ''}>Fixed amount</option></select></div>
+        <div class="form-group"><label class="form-label">Theme</label><select class="form-control" id="editTheme">${themeOptions}</select></div>
+      </div>
+      <div class="form-row" id="editRangeRow">
+        <div class="form-group"><label class="form-label">Min Amount ($)</label><input class="form-control" id="editMin" type="number" min="0.01" step="0.01" value="${Number(link.min_amount || 1)}"></div>
+        <div class="form-group"><label class="form-label">Max Amount ($)</label><input class="form-control" id="editMax" type="number" min="0.01" step="0.01" value="${Number(link.max_amount || 2000)}"></div>
+      </div>
+      <div class="form-group" id="editFixedGroup"><label class="form-label">Fixed Amount ($)</label><input class="form-control" id="editFixed" type="number" min="0.01" step="0.01" value="${Number(link.fixed_amount || 1)}"></div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Customer Fee</label><select class="form-control" id="editChargeMode" onchange="toggleLinkFeeFields('edit')"><option value="inherit" ${mode === 'inherit' ? 'selected' : ''}>Use main reseller fee</option><option value="none" ${mode === 'none' ? 'selected' : ''}>No fee</option><option value="fixed" ${mode === 'fixed' ? 'selected' : ''}>Fixed fee ($)</option><option value="percent" ${mode === 'percent' ? 'selected' : ''}>Percentage fee (%)</option></select><div class="form-hint">Added to the payer's entered amount.</div></div>
+        <div class="form-group" id="editChargeValueGroup"><label class="form-label" id="editChargeValueLabel">Fee Value</label><input class="form-control" id="editChargeValue" type="number" min="0" step="0.01" value="${Number(link.charge_value || 0)}"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Link Preview</label><select class="form-control" id="editPreviewMode"><option value="full" ${(link.preview_mode || 'full') === 'full' ? 'selected' : ''}>Full Preview (recommended)</option><option value="imessage_compact" ${link.preview_mode === 'imessage_compact' ? 'selected' : ''}>iMessage Personalized Green Preview</option></select><div class="form-hint">Shows “Pay [title]” plus a personalized green image card in iMessage. Other supported apps keep the full preview.</div></div>
+      <div class="form-group"><label class="form-label">Domain</label><input class="form-control" id="editDomain" maxlength="253" value="${escHtml(String(link.domain || window.location.host).replace(/^www\./i, ''))}"></div>
+      <div class="flex gap-8 justify-end"><button class="btn btn-primary" onclick="saveEditedLink(${Number(link.id)})">Save Changes</button><button class="btn btn-ghost" onclick="closeModal()">Cancel</button></div>`;
+    showModal(`✏️ Edit /${link.slug}`, html);
+    toggleEditAmountFields();
+    toggleLinkFeeFields('edit');
+}
+
+function toggleEditAmountFields() {
+    const fixed = document.getElementById('editAmountType')?.value === 'fixed';
+    document.getElementById('editRangeRow')?.classList.toggle('d-none', fixed);
+    document.getElementById('editFixedGroup')?.classList.toggle('d-none', !fixed);
+}
+
+async function saveEditedLink(linkId) {
+    const body = {
+        title: document.getElementById('editTitle').value,
+        brand_name: document.getElementById('editBrand').value,
+        domain: document.getElementById('editDomain').value,
+        theme: document.getElementById('editTheme').value,
+        amount_type: document.getElementById('editAmountType').value,
+        fixed_amount: document.getElementById('editFixed').value,
+        min_amount: document.getElementById('editMin').value,
+        max_amount: document.getElementById('editMax').value,
+        charge_mode: document.getElementById('editChargeMode').value,
+        charge_value: document.getElementById('editChargeValue').value,
+        preview_mode: document.getElementById('editPreviewMode').value
+    };
+    try {
+        await apiFetch(`/api/links/${linkId}`, 'PUT', body);
+        showToast('✅ Payment link updated!', 'success');
+        closeModal();
+        loadLinks();
+    } catch (err) { showToast(err.message, 'error'); }
+}
+
+function openAssignModal(linkId) {
+    const link = allLinks.find(item => Number(item.id) === Number(linkId));
+    if (!link) return showToast('Payment link is unavailable', 'error');
+    const currentSubUserId = Number(link.sub_user_id) || null;
     const options = [
         `<option value="" ${!currentSubUserId ? 'selected' : ''}>-- Reseller Master Account --</option>`,
-        ...allSubUsers.map(u => `<option value="${u.id}" ${currentSubUserId === u.id ? 'selected' : ''}>${u.name} (${u.email})</option>`)
+        ...allSubUsers.filter(u => u.status === 'active').map(u => `<option value="${Number(u.id)}" ${currentSubUserId === Number(u.id) ? 'selected' : ''}>${escHtml(u.name)} (${escHtml(u.email)})</option>`)
     ].join('');
 
     const html = `
         <div class="form-group mb-16">
-            <label class="form-label">Payment Link: <strong class="text-accent">/${slug}</strong></label>
+            <label class="form-label">Payment Link: <strong class="text-accent">/${escHtml(link.slug)}</strong></label>
             <p style="font-size:12px;color:var(--text-muted);margin-bottom:12px">Choose which Sub-User (Merchant) owns and manages this payment link:</p>
             <select class="form-control" id="assignSubUserId">
                 ${options}
@@ -856,11 +985,13 @@ function openAssignModal(linkId, slug, currentSubUserId) {
             <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
         </div>
     `;
-    openModal('👤 Assign Payment Link to User', html);
+    showModal('👤 Assign Payment Link to User', html);
 }
 
 async function saveAssignLink(linkId) {
-    const subUserId = document.getElementById('assignSubUserId').value;
+    const select = document.getElementById('assignSubUserId');
+    if (!select) return showToast('Assignment form is unavailable', 'error');
+    const subUserId = select.value;
     try {
         await apiFetch(`/api/links/${linkId}/assign`, 'PUT', { sub_user_id: subUserId });
         showToast('✅ Link assigned successfully!', 'success');
@@ -881,13 +1012,13 @@ function toggleCreateForm() {
     form.classList.toggle('d-none');
     const domainInput = document.getElementById('newDomain');
     if (domainInput && (!domainInput.value || domainInput.value === 'localhost:3000')) {
-        domainInput.value = window.location.host;
+        domainInput.value = window.location.host.replace(/^www\./i, '');
     }
 }
 
 function previewSlug() {
     const slug = document.getElementById('newSlug').value.toLowerCase().replace(/[^a-z0-9-_]/g, '');
-    document.getElementById('slugUrl').textContent = slug ? `${location.origin}/pay/${slug}` : '—';
+    document.getElementById('slugUrl').textContent = slug ? `${PUBLIC_ORIGIN}/pay/${slug}` : '—';
 }
 
 function toggleFixedAmount() {
@@ -901,9 +1032,12 @@ async function createLink() {
     formData.append('slug', document.getElementById('newSlug').value);
     formData.append('title', document.getElementById('newTitle').value);
     formData.append('brand_name', document.getElementById('newBrand').value);
-    formData.append('domain', document.getElementById('newDomain').value.trim() || window.location.host);
+    formData.append('domain', (document.getElementById('newDomain').value.trim() || window.location.host).replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/^www\./i, ''));
     formData.append('theme', selectedTheme);
     formData.append('amount_type', document.getElementById('newAmountType').value);
+    formData.append('charge_mode', document.getElementById('newChargeMode').value);
+    formData.append('charge_value', document.getElementById('newChargeValue').value);
+    formData.append('preview_mode', document.getElementById('newPreviewMode').value);
     formData.append('min_amount', document.getElementById('newMin').value);
     formData.append('max_amount', document.getElementById('newMax').value);
     const subUserVal = document.getElementById('newSubUser')?.value;
@@ -967,15 +1101,18 @@ function fallbackCopy(text) {
 }
 
 function copyLink(slug) {
-    const url = `${location.origin}/pay/${slug}`;
+    const url = `${PUBLIC_ORIGIN}/pay/${slug}`;
     copyToClipboard(url);
     showToast('📋 Link copied to clipboard!', 'success');
 }
 
 // ─── SCAN CODES ───────────────────────────────────────────────
+let scanCodeLinks = [];
+
 async function loadScanCodes() {
     try {
         const links = await apiFetch('/api/links');
+        scanCodeLinks = links;
         document.getElementById('scCount').textContent = links.length;
         document.getElementById('scActive').textContent = links.filter(l => l.status === 'active').length;
         document.getElementById('scClicks').textContent = links.reduce((s,l) => s + l.clicks, 0);
@@ -987,43 +1124,64 @@ async function loadScanCodes() {
             return;
         }
         grid.innerHTML = links.map(l => `
-            <div class="card" style="text-align:center;position:relative">
-              <div class="font-mono text-accent mb-8" style="font-weight:700;font-size:16px">/${l.slug}</div>
-              <div class="text-secondary" style="font-size:12px;margin-bottom:14px">${l.title}</div>
-              <div style="background:#0d121a;border:1px solid rgba(255,255,255,0.08);border-radius:20px;padding:16px;margin:0 auto 16px;max-width:200px;position:relative;display:flex;align-items:center;justify-content:center">
-                <canvas id="qr-${l.id}" width="160" height="160" style="border-radius:8px;display:block;margin:0 auto"></canvas>
-                <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:36px;height:36px;background:var(--accent);border:3px solid #0d121a;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:900;color:#041207;font-size:18px;pointer-events:none">$</div>
+            <div class="card scan-code-card">
+              <div class="scan-code-heading">
+                <div class="scan-code-title">${escHtml(l.title || 'Payment link')}</div>
+                <div class="scan-code-path">/${escHtml(l.slug)}</div>
               </div>
-              <div class="flex gap-8 justify-center">
-                <button class="btn btn-ghost btn-sm" onclick="copyLink('${l.slug}')">📋 Copy Link</button>
-                <a class="btn btn-primary btn-sm" href="/pay/${l.slug}" target="_blank">↗ Open Page</a>
+              <button class="scan-code-preview" onclick="previewQRCode(${Number(l.id)})" aria-label="Preview QR code for ${escHtml(l.title || l.slug)}">
+                <canvas id="qr-${l.id}" width="220" height="220"></canvas>
+                <span class="scan-code-mark">$</span>
+              </button>
+              <div class="scan-code-actions">
+                <button class="btn btn-ghost btn-sm" onclick="previewQRCode(${Number(l.id)})">Preview QR</button>
+                <button class="btn btn-ghost btn-sm" onclick="copyLink('${escHtml(l.slug)}')">Copy Link</button>
+                <a class="btn btn-primary btn-sm" href="/pay/${encodeURIComponent(l.slug)}" target="_blank" rel="noopener noreferrer">Open Page ↗</a>
               </div>
             </div>
         `).join('');
 
         // Generate real QR codes using client QRCode library
         links.forEach(l => {
-            const url = `${location.origin}/pay/${l.slug}`;
-            generateQRCode(`qr-${l.id}`, url);
+            const url = `${PUBLIC_ORIGIN}/pay/${l.slug}`;
+            generateQRCode(`qr-${l.id}`, url, 220);
         });
     } catch(e) {}
 }
 
-function generateQRCode(canvasId, text) {
+function generateQRCode(canvasId, text, width = 220) {
     const canvas = document.getElementById(canvasId);
     if (!canvas) return;
     if (window.QRCode && typeof window.QRCode.toCanvas === 'function') {
         window.QRCode.toCanvas(canvas, text, {
-            width: 160,
-            margin: 1,
+            width,
+            margin: 2,
             color: {
                 dark: '#ffffff',
-                light: '#00000000'
+                light: '#000000'
             }
         }, function (err) {
             if (err) console.error(err);
         });
     }
+}
+
+function previewQRCode(id) {
+    const link = scanCodeLinks.find(item => Number(item.id) === Number(id));
+    if (!link) return showToast('QR code is unavailable', 'error');
+    const safeSlug = escHtml(link.slug);
+    const url = `${PUBLIC_ORIGIN}/pay/${link.slug}`;
+    showModal(
+        link.title || 'Payment QR Code',
+        `<div class="qr-preview-modal">
+           <div class="qr-preview-path">/${safeSlug}</div>
+           <div class="qr-preview-canvas"><canvas id="qr-preview-${Number(link.id)}" width="320" height="320"></canvas><span class="qr-preview-mark">$</span></div>
+           <div class="qr-preview-url">${escHtml(url)}</div>
+         </div>`,
+        `<button class="btn btn-ghost" onclick="copyLink('${safeSlug}')">Copy Link</button>
+         <a class="btn btn-primary" href="/pay/${encodeURIComponent(link.slug)}" target="_blank" rel="noopener noreferrer">Open Payment Page ↗</a>`
+    );
+    requestAnimationFrame(() => generateQRCode(`qr-preview-${link.id}`, url, 320));
 }
 
 // ─── PAYMENTS ─────────────────────────────────────────────────
@@ -1072,7 +1230,10 @@ async function loadPayments() {
               <td class="font-mono" style="font-size:11px">${p.receiving_wallet ? escHtml(p.receiving_wallet.substring(0,20))+'...' : '—'}</td>
               <td>${statusBadge(p.status)}</td>
               <td>
-                ${!p.seller_checked ? `<button class="btn btn-sm btn-ghost" onclick="checkPayment(${p.id})">✓ Check</button>` : '<span class="badge badge-green">Checked</span>'}
+                <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                  ${(p.provider === 'email' && ['pending','expired'].includes(p.status)) ? `<button class="btn btn-sm btn-outline-green" onclick="confirmDirectPayment(${p.id}, '${Number(p.total_usd || 0).toFixed(2)}')">✅ Mark Paid</button>` : ''}
+                  ${!p.seller_checked ? `<button class="btn btn-sm btn-ghost" onclick="reviewPayment(${p.id})">Review</button>` : '<span class="badge badge-green">Reviewed</span>'}
+                </div>
               </td>
             </tr>
         `;}).join('');
@@ -1091,11 +1252,21 @@ function clearPaymentFilters() {
     loadPayments();
 }
 
-async function checkPayment(id) {
+async function reviewPayment(id) {
     try {
         await apiFetch(`/api/payments/${id}/check`, 'PATCH');
         loadPayments();
-    } catch(e) {}
+    } catch(e) { showToast(e.message, 'error'); }
+}
+
+async function confirmDirectPayment(id, amount) {
+    const approved = window.confirm(`Only continue if your receiving wallet shows the $${amount} payment as received. Mark this payment as paid?`);
+    if (!approved) return;
+    try {
+        await apiFetch(`/api/payments/${id}/confirm-paid`, 'PATCH', { confirmed: true });
+        showToast(`Payment #${id} marked paid`, 'success');
+        loadPayments();
+    } catch(e) { showToast(e.message, 'error'); }
 }
 
 function exportPayments() {
@@ -1344,7 +1515,7 @@ async function loadDevices() {
         const data = await apiFetch('/api/security/devices');
         document.getElementById('devCount').textContent = data.devices.length;
 
-        const current = data.devices.find(d => d.id === data.currentToken);
+        const current = data.devices.find(d => Number(d.id) === Number(data.currentSessionId));
         if (current) {
             document.getElementById('devCurrent').textContent = current.device_type || 'Desktop';
             document.getElementById('devIp').textContent = current.ip || '—';
@@ -1352,7 +1523,7 @@ async function loadDevices() {
 
         const list = document.getElementById('devicesList');
         list.innerHTML = data.devices.map(d => {
-            const isCurrent = d.id === data.currentToken;
+            const isCurrent = Number(d.id) === Number(data.currentSessionId);
             const ua = d.user_agent || '';
             const browser = ua.includes('Chrome') ? 'Chrome' : ua.includes('Firefox') ? 'Firefox' : 'Browser';
             const os = ua.includes('Windows') ? 'Windows' : ua.includes('Mac') ? 'macOS' : ua.includes('Linux') ? 'Linux' : 'Unknown OS';
@@ -1360,22 +1531,22 @@ async function loadDevices() {
                 <div class="device-card ${isCurrent ? 'current' : ''}">
                   <div class="device-icon">${d.device_type === 'Mobile' ? '📱' : '💻'}</div>
                   <div class="device-info">
-                    <div class="device-name">${browser} on ${os} ${isCurrent ? '<span class="badge badge-green">Current</span>' : '<span class="badge badge-blue">Active</span>'}</div>
+                    <div class="device-name">${escHtml(browser)} on ${escHtml(os)} ${isCurrent ? '<span class="badge badge-green">Current</span>' : '<span class="badge badge-blue">Active</span>'}</div>
                     <div class="device-meta">
-                      IP: ${d.ip || '—'} · Last active: ${fmtDate(d.last_active)} · Expires: ${fmtDate(d.expires_at)}
+                      IP: ${escHtml(d.ip || '—')} · Last active: ${escHtml(fmtDate(d.last_active))} · Expires: ${escHtml(fmtDate(d.expires_at))}
                     </div>
-                    <div class="device-meta" style="font-size:10px;margin-top:4px">${truncate(d.user_agent, 60)}</div>
+                    <div class="device-meta" style="font-size:10px;margin-top:4px">${escHtml(truncate(d.user_agent, 60))}</div>
                   </div>
-                  ${!isCurrent ? `<button class="btn btn-sm btn-outline-red" onclick="removeDevice('${d.id}')">Remove</button>` : ''}
+                  ${!isCurrent ? `<button class="btn btn-sm btn-outline-red" onclick="removeDevice(${Number(d.id)})">Remove</button>` : ''}
                 </div>
             `;
         }).join('');
     } catch(e) {}
 }
 
-async function removeDevice(tokenHash) {
+async function removeDevice(sessionId) {
     try {
-        await apiFetch(`/api/security/devices/${tokenHash}`, 'DELETE');
+        await apiFetch(`/api/security/devices/${sessionId}`, 'DELETE');
         showToast('Device removed', 'success');
         loadDevices();
     } catch(err) { showToast(err.message, 'error'); }
@@ -1707,8 +1878,8 @@ async function load2FA() {
     el.innerHTML = `<div class="page-header"><h2>🔑 Two-Factor Authentication (2FA)</h2></div><div id="twofaContent"><div class="loading-spinner"></div></div>`;
 
     try {
-        const status = await apiFetch('/api/2fa/status');
-        render2FAPage(status.enabled);
+        const status = await apiFetch('/api/security/status');
+        render2FAPage(status.totp_enabled);
     } catch(e) {
         document.getElementById('twofaContent').innerHTML = `<div class="alert alert-error">Failed to load 2FA status</div>`;
     }
@@ -1733,6 +1904,9 @@ function render2FAPage(enabled) {
                 <p style="font-size:13px;color:#6e7681;margin-bottom:12px;">To disable 2FA, enter your current authenticator code:</p>
                 <div class="form-group" style="margin-bottom:12px;">
                     <input id="disableTotpCode" class="input" placeholder="6-digit code" maxlength="6" style="letter-spacing:6px;font-size:20px;text-align:center;">
+                </div>
+                <div class="form-group" style="margin-bottom:12px;">
+                    <input id="disableTotpPassword" class="input" type="password" autocomplete="current-password" placeholder="Current password">
                 </div>
                 <button class="btn btn-danger" style="width:100%;" onclick="disable2FA()">🔓 Disable 2FA</button>
             </div>
@@ -1770,9 +1944,9 @@ function render2FAPage(enabled) {
 
 async function setup2FA() {
     try {
-        const data = await apiFetch('/api/2fa/setup');
+        const data = await apiFetch('/api/security/totp/setup', 'POST');
         document.getElementById('qrSetupArea').style.display = 'block';
-        document.getElementById('qrCodeImg').src = data.qr_code;
+        document.getElementById('qrCodeImg').src = data.qr;
         document.getElementById('totpSecret').textContent = data.secret;
     } catch(e) {
         showToast(e.message, 'error');
@@ -1783,7 +1957,7 @@ async function verify2FA() {
     const code = document.getElementById('verifyTotpCode')?.value?.trim();
     if (!code || code.length !== 6) return showToast('Enter a valid 6-digit code', 'error');
     try {
-        await apiFetch('/api/2fa/verify', 'POST', { code });
+        await apiFetch('/api/security/totp/enable', 'POST', { code });
         showToast('✅ 2FA enabled! Your account is now protected.', 'success');
         setTimeout(() => load2FA(), 1200);
     } catch(e) {
@@ -1793,13 +1967,14 @@ async function verify2FA() {
 
 async function disable2FA() {
     const code = document.getElementById('disableTotpCode')?.value?.trim();
+    const current_password = document.getElementById('disableTotpPassword')?.value || '';
     if (!code || code.length !== 6) return showToast('Enter your current 6-digit code', 'error');
+    if (!current_password) return showToast('Enter your current password', 'error');
     try {
-        await apiFetch('/api/2fa/disable', 'POST', { code });
+        await apiFetch('/api/security/totp/disable', 'POST', { code, current_password });
         showToast('2FA disabled.', 'info');
         setTimeout(() => load2FA(), 1200);
     } catch(e) {
         showToast(e.message, 'error');
     }
 }
-

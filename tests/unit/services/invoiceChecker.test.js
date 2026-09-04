@@ -45,6 +45,25 @@ test('Blink paid=false -> { paid: false }', async () => {
     expect(result.paid).toBe(false);
 });
 
+test('uses the payment provider even if the reseller later switches wallets', async () => {
+    BlinkService.checkInvoice.mockResolvedValue({ paid: true });
+    const result = await InvoiceChecker.check({
+        ...basePayment,
+        provider: 'blink',
+        wallet_type: 'lnbits',
+        blink_api_key: 'key1',
+        invoice_id: 'hash1'
+    });
+    expect(result.paid).toBe(true);
+    expect(BlinkService.checkInvoice).toHaveBeenCalled();
+});
+
+test('Blink expired=true is propagated', async () => {
+    BlinkService.checkInvoice.mockResolvedValue({ paid: false, expired: true });
+    const result = await InvoiceChecker.check({ ...basePayment, wallet_type: 'blink', blink_api_key: 'key1', invoice_id: 'hash1' });
+    expect(result).toEqual({ paid: false, expired: true, error: null });
+});
+
 test('OpenNode status=paid -> { paid: true }', async () => {
     axios.get.mockResolvedValue({ data: { data: { status: 'paid' } } });
     const result = await InvoiceChecker.check({ ...basePayment, wallet_type: 'opennode', opennode_api_key: 'on_key', opennode_env: 'live', invoice_id: 'on1' });
@@ -79,4 +98,16 @@ test('verify_url status=PAID -> { paid: true }', async () => {
 test('no matching provider -> { paid: false }', async () => {
     const result = await InvoiceChecker.check({ id: 1, wallet_type: 'email', invoice_id: null, lnbits_invoice_key: null, blink_api_key: null, opennode_api_key: null, verify_url: null });
     expect(result.paid).toBe(false);
+});
+
+test('missing provider credentials returns an explicit re-entry error', async () => {
+    const result = await InvoiceChecker.check({ provider: 'lnbits', invoice_id: 'hash', lnbits_invoice_key: null });
+    expect(result.credentialError).toBe(true);
+    expect(result.error).toMatch(/Re-enter/i);
+});
+
+test('BTCPay settled invoice is detected by polling', async () => {
+    axios.get.mockResolvedValue({ data: { status: 'Settled' } });
+    const result = await InvoiceChecker.check({ provider: 'btcpay', invoice_id: 'bt1', btcpay_url: 'https://btcpay.example', btcpay_api_key: 'key' });
+    expect(result.paid).toBe(true);
 });

@@ -5,7 +5,7 @@
  * (SQL string interpolation). These tests verify the routes return 200 with
  * auth middleware properly wiring req.reseller.
  */
-jest.mock('../../database/db');
+jest.mock('../../database/db', () => ({ query: jest.fn() }));
 jest.mock('../../middleware/auth');
 
 const request = require('supertest');
@@ -90,13 +90,13 @@ test('GET /api/analytics/chart: period clamped to 90 maximum', async () => {
     expect(res.body.labels.length).toBe(90); // clamped to 90
 });
 
-test('BUG-002 regression: SQL param binding used (db.query second arg contains interval string)', async () => {
+test('BUG-002 regression: chart cutoff is safely parameterized', async () => {
     db.query.mockResolvedValueOnce([[]]);
     await request(app).get('/api/analytics/chart?period=30');
     const [sql, params] = db.query.mock.calls[0];
-    // The days param ('-30 days') should be in params, NOT interpolated into the SQL string
-    expect(sql).not.toContain('-30 days');
-    expect(params).toContain('-30 days');
+    expect(sql).toContain('paid_at >= ?');
+    expect(params[0]).toBe(42);
+    expect(params[1]).toBeInstanceOf(Date);
 });
 
 // ── Top Links ─────────────────────────────────────────────────────────────────

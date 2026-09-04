@@ -21,7 +21,9 @@ const authMiddleware = async (req, res, next) => {
     req.clientIp = getClientIp(req);
 
     try {
-        const token = req.cookies?.auth_token || req.headers['authorization']?.replace('Bearer ', '');
+        const authorization = String(req.headers['authorization'] || '');
+        const bearerMatch = authorization.match(/^Bearer\s+(.+)$/i);
+        const token = req.cookies?.auth_token || bearerMatch?.[1];
         if (!token) {
             if (isApiPath(req)) return res.status(401).json({ error: 'Unauthorized' });
             return res.redirect('/login');
@@ -43,7 +45,7 @@ const authMiddleware = async (req, res, next) => {
             return res.redirect('/login');
         }
 
-        await db.query("UPDATE sessions SET last_active = datetime('now') WHERE token_hash = ?", [tokenHash]);
+        await db.query("UPDATE sessions SET last_active = datetime('now') WHERE token_hash = ? AND last_active < datetime('now', '-1 minute')", [tokenHash]);
 
         if (decoded.type === 'sub_user' || decoded.role === 'sub_user') {
             const [subUsers] = await db.query(
@@ -100,6 +102,7 @@ const authMiddleware = async (req, res, next) => {
         req.token = token;
         req.tokenHash = tokenHash;
         req.sessionId = sessions[0].id;
+        req.authPayload = decoded;
 
         if (req.role !== 'sub_user' && req.reseller.must_change_password === 1) {
             const allowedPaths = ['/force-password-change', '/api/security/password', '/api/auth/logout'];
@@ -113,7 +116,7 @@ const authMiddleware = async (req, res, next) => {
 
         next();
     } catch (err) {
-        res.clearCookie('auth_token');
+            res.clearCookie('auth_token', { path: '/' });
         if (isApiPath(req)) return res.status(401).json({ error: 'Invalid token' });
         return res.redirect('/login');
     }

@@ -5,24 +5,30 @@ const auth = require('../middleware/auth');
 const { requireRole } = auth;
 
 router.use('/api/subuser', auth, requireRole('sub_user'));
+router.use('/api/subuser', (req, res, next) => {
+    if (req.authPayload?.owner_preview === true && req.method !== 'GET') return res.status(403).json({ error: 'Preview mode is read-only' });
+    next();
+});
 
 function roundMoney(value) {
     return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
 }
 
-async function getBalance(subUserId) {
+async function getBalance(subUser) {
     const [[earned]] = await db.query(
-        `SELECT COALESCE(SUM(total_usd), 0) AS total_received
-         FROM payments
-         WHERE sub_user_id = ? AND status = 'paid'`,
-        [subUserId]
+        `SELECT COALESCE(SUM(p.amount_usd), 0) AS total_received
+         FROM payments p
+         LEFT JOIN payment_links pl ON pl.id = p.link_id
+         WHERE p.reseller_id = ? AND (p.sub_user_id = ? OR pl.sub_user_id = ?)
+           AND p.status = 'paid'`,
+        [subUser.reseller_id, subUser.id, subUser.id]
     );
 
     const [[withdrawn]] = await db.query(
         `SELECT COALESCE(SUM(amount_usd), 0) AS reserved_amount
          FROM withdrawals
          WHERE sub_user_id = ? AND status IN ('pending', 'approved')`,
-        [subUserId]
+        [subUser.id]
     );
 
     const totalReceived = Number(earned?.total_received || 0);
@@ -34,19 +40,21 @@ async function getBalance(subUserId) {
 router.get('/api/subuser/overview', async (req, res) => {
     try {
         const su = req.sub_user;
-        const availableBalance = await getBalance(su.id);
+        const availableBalance = await getBalance(su);
         const rate = Number(su.rate_per_dollar || 1);
         const estimatedPayout = roundMoney(availableBalance * rate);
 
         const [[totals]] = await db.query(
             `SELECT
                 COUNT(*) AS total_invoices,
-                COUNT(CASE WHEN status = 'paid' THEN 1 END) AS paid_invoices,
-                COUNT(CASE WHEN status = 'pending' THEN 1 END) AS pending_invoices,
-                COUNT(CASE WHEN status = 'expired' THEN 1 END) AS expired_invoices,
-                COALESCE(SUM(CASE WHEN status = 'paid' THEN total_usd ELSE 0 END), 0) AS total_received
-             FROM payments WHERE sub_user_id = ?`,
-            [su.id]
+                COUNT(CASE WHEN p.status = 'paid' THEN 1 END) AS paid_invoices,
+                COUNT(CASE WHEN p.status = 'pending' THEN 1 END) AS pending_invoices,
+                COUNT(CASE WHEN p.status = 'expired' THEN 1 END) AS expired_invoices,
+                COALESCE(SUM(CASE WHEN p.status = 'paid' THEN p.amount_usd ELSE 0 END), 0) AS total_received
+             FROM payments p
+             LEFT JOIN payment_links pl ON pl.id = p.link_id
+             WHERE p.reseller_id = ? AND (p.sub_user_id = ? OR pl.sub_user_id = ?)`,
+            [su.reseller_id, su.id, su.id]
         );
 
         const [[clicks]] = await db.query(
@@ -89,7 +97,7 @@ router.get('/api/subuser/links', async (req, res) => {
                 pl.clicks, pl.created_at,
                 (SELECT COUNT(*) FROM payments p WHERE p.link_id = pl.id) AS invoice_count,
                 (SELECT COUNT(*) FROM payments p WHERE p.link_id = pl.id AND p.status = 'paid') AS paid_count,
-                (SELECT COALESCE(SUM(p.total_usd), 0) FROM payments p WHERE p.link_id = pl.id AND p.status = 'paid') AS paid_volume
+                (SELECT COALESCE(SUM(p.amount_usd), 0) FROM payments p WHERE p.link_id = pl.id AND p.status = 'paid') AS paid_volume
              FROM payment_links pl
              WHERE pl.sub_user_id = ? AND pl.reseller_id = ?
              ORDER BY pl.created_at DESC`,
@@ -110,13 +118,12 @@ router.get('/api/subuser/links', async (req, res) => {
 router.get('/api/subuser/analytics', async (req, res) => {
     try {
         const subUserId = req.sub_user.id;
-
         const [links] = await db.query(
             `SELECT
                 pl.id, pl.title, pl.slug, pl.clicks,
                 COUNT(p.id) AS invoice_count,
                 COUNT(CASE WHEN p.status = 'paid' THEN 1 END) AS paid_count,
-                COALESCE(SUM(CASE WHEN p.status = 'paid' THEN p.total_usd ELSE 0 END), 0) AS paid_volume
+                COALESCE(SUM(CASE WHEN p.status = 'paid' THEN p.amount_usd ELSE 0 END), 0) AS paid_volume
              FROM payment_links pl
              LEFT JOIN payments p ON p.link_id = pl.id
              WHERE pl.sub_user_id = ? AND pl.reseller_id = ?
@@ -126,13 +133,15 @@ router.get('/api/subuser/analytics', async (req, res) => {
         );
 
         const [recent] = await db.query(
-            `SELECT p.id, p.status, p.amount_usd, p.charge_usd, p.total_usd,
+            `SELECT p.id, p.status, p.amount_usd,
                     p.created_at, p.paid_at, pl.slug, pl.title
              FROM payments p
              LEFT JOIN payment_links pl ON pl.id = p.link_id
-             WHERE p.sub_user_id = ? AND p.reseller_id = ?
+             WHERE p.reseller_id = ? AND (p.sub_user_id = ? OR pl.sub_user_id = ?)
+               AND p.status != 'expired'
+               AND NOT (p.status='pending' AND p.expires_at<=datetime('now'))
              ORDER BY p.created_at DESC LIMIT 25`,
-            [subUserId, req.sub_user.reseller_id]
+            [req.sub_user.reseller_id, subUserId, subUserId]
         );
 
         res.json({
@@ -170,7 +179,7 @@ router.post('/api/subuser/withdrawals', async (req, res) => {
             return res.status(400).json({ error: 'Enter a valid withdrawal amount' });
         }
 
-        const availableBalance = await getBalance(req.sub_user.id);
+        const availableBalance = await getBalance(req.sub_user);
         if (requested > availableBalance + 0.000001) {
             return res.status(400).json({ error: `Insufficient available balance. Maximum: $${availableBalance.toFixed(2)}` });
         }

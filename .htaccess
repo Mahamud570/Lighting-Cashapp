@@ -1,14 +1,40 @@
 RewriteEngine On
 
-# 1. Disable LiteSpeed Anti-Bot / reCAPTCHA challenge for Social Media crawlers
+# Never expose server source, secrets, databases, dependency metadata, or backups.
+# These rules are defense-in-depth for cPanel/Apache; Express also blocks them.
+RewriteRule ^(?:data|database|middleware|routes|services|scripts|tests|node_modules|tmp)(?:/|$) - [F,L,NC]
+RewriteRule ^(?:server|app)\.js$ - [F,L,NC]
+RewriteRule ^(?:package(?:-lock)?\.json|\.env(?:\..*)?|\.gitignore|README\.md|SESSION_STATE\.md|STABILITY_REPORT\.md|deploy\.zip)$ - [F,L,NC]
+RewriteRule (^|/)\.(?!well-known(?:/|$)) - [F,L,NC]
+
+<FilesMatch "(?i)\.(?:db|sqlite3?|sql|log|bak|old|orig|map|zip|tar|gz|7z|pem|key)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Deny from all
+  </IfModule>
+</FilesMatch>
+
+# Allow social crawlers to fetch only public payment previews without a hosting
+# provider bot challenge. User-Agent alone must never bypass protected routes.
 <IfModule Litespeed>
+  RewriteCond %{REQUEST_METHOD} ^(?:GET|HEAD)$ [NC]
+  RewriteCond %{REQUEST_URI} ^/(?:pay/|img/cashapp-social-card\.png$) [NC]
   RewriteCond %{HTTP_USER_AGENT} (TelegramBot|Twitterbot|facebookexternalhit|WhatsApp|Discordbot|Applebot) [NC]
   RewriteRule .* - [E=noconntimeout:1,E=noabort:1,E=verifycaptcha:off,E=botcheck:off]
 </IfModule>
 
-# 2. Force HTTPS for all requests
+# Force HTTPS for all requests.
 RewriteCond %{HTTPS} off
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
-# 4. Prevent directory listing
+# Prevent directory listing and suppress avoidable server fingerprints.
 Options -Indexes
+ServerSignature Off
+<IfModule mod_headers.c>
+  Header always unset X-Powered-By
+  Header always set X-Content-Type-Options "nosniff"
+  Header always set X-Frame-Options "DENY"
+  Header always set Referrer-Policy "no-referrer"
+</IfModule>

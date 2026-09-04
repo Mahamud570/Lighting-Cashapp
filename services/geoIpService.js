@@ -1,8 +1,27 @@
-const http = require('http');
 const https = require('https');
 
-// In-memory cache for IP locations
+// In-memory cache for IP locations. Successful lookups are stable for a day;
+// failures are retried quickly so a temporary API slowdown cannot make an IP
+// appear unknown for the lifetime of the Node process.
 const geoCache = new Map();
+const SUCCESS_CACHE_MS = 24 * 60 * 60 * 1000;
+const FAILURE_CACHE_MS = 60 * 1000;
+const LOOKUP_TIMEOUT_MS = 8000;
+
+function readCache(ip) {
+    const entry = geoCache.get(ip);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+        geoCache.delete(ip);
+        return null;
+    }
+    return entry.value;
+}
+
+function writeCache(ip, value, ttlMs) {
+    geoCache.set(ip, { value, expiresAt: Date.now() + ttlMs });
+    return value;
+}
 
 /**
  * Convert 2-letter ISO country code to Emoji Flag
@@ -54,52 +73,72 @@ class GeoIpService {
             return '🏠 Localhost';
         }
 
+        const whoerApiKey = String(process.env.WHOER_API_KEY || '').trim();
+        const endpointTemplate = String(process.env.GEOIP_ENDPOINT || (whoerApiKey ? 'https://www.whoer.live/api/v2/bulk-scan' : 'https://ipwho.is/{ip}')).trim();
+        if (process.env.GEOIP_ENABLED === '0') return '🌐 Location disabled';
+        if (!endpointTemplate.startsWith('https://') || (!whoerApiKey && !endpointTemplate.includes('{ip}'))) return '🌐 Location unavailable';
+
         const cleanIp = ip.replace(/^::ffff:/, '').trim();
 
         // Check cache
-        if (geoCache.has(cleanIp)) {
-            return geoCache.get(cleanIp);
-        }
+        const cached = readCache(cleanIp);
+        if (cached) return cached;
 
         return new Promise((resolve) => {
             const timer = setTimeout(() => {
                 const fallback = '🌐 Unknown Location';
-                geoCache.set(cleanIp, fallback);
-                resolve(fallback);
-            }, 2000); // 2s max timeout
+                request.destroy();
+                resolve(writeCache(cleanIp, fallback, FAILURE_CACHE_MS));
+            }, LOOKUP_TIMEOUT_MS);
 
-            const reqUrl = `http://ip-api.com/json/${cleanIp}?fields=status,country,countryCode,city`;
-            
-            http.get(reqUrl, (res) => {
+            const reqUrl = whoerApiKey ? endpointTemplate : endpointTemplate.replace('{ip}', encodeURIComponent(cleanIp));
+            const body = whoerApiKey ? JSON.stringify({ ips: [cleanIp] }) : null;
+            const requestOptions = whoerApiKey ? {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(body),
+                    'x-api-key': whoerApiKey
+                }
+            } : undefined;
+
+            const request = https.request(reqUrl, requestOptions, (res) => {
                 let data = '';
-                res.on('data', chunk => data += chunk);
+                res.on('data', chunk => {
+                    if (data.length < 16384) data += chunk;
+                });
                 res.on('end', () => {
                     clearTimeout(timer);
                     try {
                         const parsed = JSON.parse(data);
-                        if (parsed.status === 'success' && parsed.countryCode) {
-                            const flag = getCountryFlag(parsed.countryCode);
-                            const cityStr = parsed.city ? `${parsed.city}, ` : '';
-                            const locationStr = `${flag} ${cityStr}${parsed.countryCode}`;
-                            geoCache.set(cleanIp, locationStr);
-                            resolve(locationStr);
+                        const result = Array.isArray(parsed.results) ? parsed.results[0] : parsed;
+                        const countryCode = result?.countryCode || result?.country_code || result?.data?.geoLocation?.countryCode;
+                        const city = result?.city || result?.data?.geoLocation?.city;
+                        if (result && result.error !== true && (result.status === 'success' || result.success === true || !result.status) && countryCode) {
+                            const flag = getCountryFlag(countryCode);
+                            const cityStr = city ? `${city}, ` : '';
+                            const locationStr = `${flag} ${cityStr}${countryCode}`;
+                            resolve(writeCache(cleanIp, locationStr, SUCCESS_CACHE_MS));
                         } else {
                             const fallback = '🌐 Unknown Location';
-                            geoCache.set(cleanIp, fallback);
-                            resolve(fallback);
+                            console.warn(`[geo] Whoer lookup returned HTTP ${res.statusCode || 0} without a location`);
+                            resolve(writeCache(cleanIp, fallback, FAILURE_CACHE_MS));
                         }
                     } catch (e) {
                         const fallback = '🌐 Unknown Location';
-                        geoCache.set(cleanIp, fallback);
-                        resolve(fallback);
+                        console.warn(`[geo] Whoer response could not be parsed: ${e.message}`);
+                        resolve(writeCache(cleanIp, fallback, FAILURE_CACHE_MS));
                     }
                 });
-            }).on('error', () => {
+            });
+            request.on('error', (error) => {
                 clearTimeout(timer);
                 const fallback = '🌐 Unknown Location';
-                geoCache.set(cleanIp, fallback);
-                resolve(fallback);
+                if (error.code !== 'ECONNRESET') console.warn(`[geo] Lookup failed: ${error.message}`);
+                resolve(writeCache(cleanIp, fallback, FAILURE_CACHE_MS));
             });
+            if (body) request.write(body);
+            request.end();
         });
     }
 }

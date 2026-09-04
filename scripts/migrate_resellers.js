@@ -68,15 +68,6 @@ sqlite.prepare(`
 sqlite.prepare(`DROP TABLE resellers`).run();
 sqlite.prepare(`ALTER TABLE resellers_new RENAME TO resellers`).run();
 
-// 4. Update Blink wallet credentials
-sqlite.prepare(`
-    UPDATE resellers SET 
-        wallet_type = 'blink',
-        blink_api_key = 'blink_rPgVncESLFjFLUo2NYnsL2ExkDjNYoKB9gzoi5cN1OEECdB8lxO5230PdwzFrF3f',
-        blink_wallet_id = '9177eddf-466e-4a60-8113-d4c519406f0d'
-    WHERE id = 1
-`).run();
-
 sqlite.pragma('foreign_keys = ON');
 
-console.log('✅ Resellers table migrated and Blink wallet credentials configured successfully!');
+console.log('✅ Resellers table migrated. Wallet configuration must be managed separately.');

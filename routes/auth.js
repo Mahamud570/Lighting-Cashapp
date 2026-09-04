@@ -11,6 +11,16 @@ const { authLimiter } = require('../middleware/rateLimiter');
 const TRUST_COOKIE = 'trusted_browser';
 const TRUST_DAYS = 30;
 
+function trustCookieOptions() {
+    return {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: TRUST_DAYS * 24 * 60 * 60 * 1000,
+        path: '/'
+    };
+}
+
 function sha256(value) {
     return crypto.createHash('sha256').update(String(value)).digest('hex');
 }
@@ -40,7 +50,7 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
         if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
 
         const cleanUser = String(username).trim();
-        const cleanPass = String(password).trim();
+        const cleanPass = String(password);
 
         const [rows] = await db.query(
             "SELECT * FROM resellers WHERE (LOWER(TRIM(username)) = LOWER(?) OR LOWER(TRIM(email)) = LOWER(?)) AND (status IS NULL OR LOWER(status) = 'active')",
@@ -82,10 +92,13 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
             );
             if (trustedRows.length) {
                 trustedBrowserValid = true;
+                const trustExpiresAt = new Date(Date.now() + TRUST_DAYS * 24 * 60 * 60 * 1000);
                 await db.query(
-                    "UPDATE trusted_devices SET last_used = datetime('now'), ip = ?, user_agent = ?, device_type = ? WHERE id = ?",
-                    [ip, ua, deviceTypeFromUa(ua), trustedRows[0].id]
+                    "UPDATE trusted_devices SET last_used = datetime('now'), expires_at = ?, ip = ?, user_agent = ?, device_type = ? WHERE id = ?",
+                    [trustExpiresAt, ip, ua, deviceTypeFromUa(ua), trustedRows[0].id]
                 );
+                // Refresh the browser token as a rolling 30-day trust period.
+                res.cookie(TRUST_COOKIE, req.cookies[TRUST_COOKIE], trustCookieOptions());
             } else {
                 res.clearCookie(TRUST_COOKIE, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax' });
             }
@@ -113,12 +126,7 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
                      VALUES (?,?,?,?,?,?,?)`,
                     [userObj.id, trustHash, browserLabel(ua), ip, ua, deviceTypeFromUa(ua), trustExpiresAt]
                 );
-                res.cookie(TRUST_COOKIE, rawTrustToken, {
-                    httpOnly: true,
-                    secure: process.env.NODE_ENV === 'production',
-                    sameSite: 'lax',
-                    maxAge: TRUST_DAYS * 24 * 60 * 60 * 1000
-                });
+                res.cookie(TRUST_COOKIE, rawTrustToken, trustCookieOptions());
             }
         }
 
@@ -150,7 +158,9 @@ router.post('/api/auth/login', authLimiter, async (req, res) => {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
             maxAge: 7 * 24 * 60 * 60 * 1000,
-            sameSite: 'lax'
+            sameSite: 'lax',
+            path: '/',
+            priority: 'high'
         });
 
         const redirectUrl = role === 'owner' ? '/owner' : (role === 'sub_user' ? '/subuser' : '/reseller');
@@ -165,14 +175,51 @@ router.post('/api/auth/register', (req, res) => {
     res.status(403).json({ error: 'Public registration is disabled. Accounts must be created by an Owner or Reseller.' });
 });
 
-router.post('/api/auth/logout', async (req, res) => {
-    const token = req.cookies?.auth_token;
-    if (token) {
-        const tokenHash = sha256(token);
-        await db.query('DELETE FROM sessions WHERE token_hash = ?', [tokenHash]).catch(() => {});
+router.post('/api/auth/exit-preview', async (req, res) => {
+    try {
+        const returnToken = req.cookies?.owner_return_token;
+        if (!returnToken) return res.status(401).json({ error: 'Owner preview session has expired' });
+        const decoded = jwt.verify(returnToken, process.env.JWT_SECRET);
+        if (decoded.role !== 'owner') return res.status(403).json({ error: 'Invalid owner preview session' });
+        const returnHash = sha256(returnToken);
+        const [sessions] = await db.query("SELECT id FROM sessions WHERE token_hash=? AND account_type='reseller' AND account_id=? AND expires_at > datetime('now')", [returnHash, decoded.id]);
+        const [owners] = await db.query("SELECT id FROM resellers WHERE id=? AND role='owner' AND status='active'", [decoded.id]);
+        if (!sessions.length || !owners.length) return res.status(401).json({ error: 'Owner session is no longer active' });
+
+        const currentToken = req.cookies?.auth_token;
+        if (currentToken) await db.query('DELETE FROM sessions WHERE token_hash=?', [sha256(currentToken)]).catch(() => {});
+        res.cookie('auth_token', returnToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            maxAge: 7 * 24 * 60 * 60 * 1000,
+            path: '/',
+            priority: 'high'
+        });
+        res.clearCookie('owner_return_token', { path: '/' });
+        res.json({ success: true, redirect: '/owner' });
+    } catch (err) {
+        res.clearCookie('owner_return_token', { path: '/' });
+        res.status(401).json({ error: 'Owner preview session has expired' });
     }
-    res.clearCookie('auth_token');
-    res.json({ success: true });
+});
+
+router.post('/api/auth/logout', async (req, res) => {
+    try {
+        const token = req.cookies?.auth_token;
+        if (token) {
+            const tokenHash = sha256(token);
+            // Logout revokes only this session. It must never alter wallet,
+            // reseller, staff, link, or platform configuration rows.
+            await db.query('DELETE FROM sessions WHERE token_hash = ?', [tokenHash]);
+        }
+        res.clearCookie('auth_token', { path: '/' });
+        res.clearCookie('owner_return_token', { path: '/' });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('[auth] Logout session persistence failed:', err.message);
+        res.status(503).json({ error: 'Logout could not be saved because database storage is unavailable. Your settings were not changed.' });
+    }
 });
 
 module.exports = router;

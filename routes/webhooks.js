@@ -128,7 +128,9 @@ router.post('/api/webhooks/opennode', async (req, res) => {
         }
 
         const expectedHash = crypto.createHmac('sha256', payment.opennode_api_key).update(body.id).digest('hex');
-        if (receivedHash !== expectedHash) {
+        const received = Buffer.from(String(receivedHash), 'utf8');
+        const expected = Buffer.from(expectedHash, 'utf8');
+        if (received.length !== expected.length || !crypto.timingSafeEqual(received, expected)) {
             return res.status(401).json({ error: 'Invalid OpenNode HMAC signature' });
         }
 

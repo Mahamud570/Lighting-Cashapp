@@ -5,6 +5,7 @@ const auth = require('../middleware/auth');
 const { requireRole } = auth;
 const BinanceService = require('../services/binanceService');
 const PayoutService = require('../services/payoutService');
+const { safeErrorDetails, logSafeError } = require('../utils/safeError');
 
 router.use('/api/sweeps*', auth, requireRole('reseller', 'owner'));
 
@@ -21,9 +22,22 @@ router.get('/api/sweeps', auth, async (req, res) => {
             [req.reseller.id]
         );
 
-        res.json({ sweeps });
+        const [fees] = await db.query(
+            `SELECT CONCAT('wallet-fee-',id) id,reseller_id,NULL payment_id,'platform_wallet_fee' sweep_type,
+                    amount_sats,amount_usd,'Owner Maintenance Wallet' target_destination,txid,preimage,
+                    network_fee_sats fee_sats,
+                    CASE WHEN status='completed' THEN 'completed'
+                         WHEN status IN ('pending','processing','retry') THEN 'pending'
+                         ELSE 'failed' END status,
+                    error_message,created_at
+             FROM platform_wallet_fees WHERE reseller_id=? ORDER BY created_at DESC LIMIT 50`,
+            [req.reseller.id]
+        );
+
+        res.json({ sweeps: [...sweeps, ...fees].sort((a,b) => new Date(b.created_at) - new Date(a.created_at)).slice(0,50) });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        logSafeError('[sweeps] List failed:', err);
+        res.status(500).json({ error: 'Unable to load sweep history' });
     }
 });
 
@@ -45,7 +59,8 @@ router.post('/api/sweeps/test-binance', auth, async (req, res) => {
             data: result
         });
     } catch (err) {
-        res.status(400).json({ error: 'Binance Connection Failed: ' + (err.response?.data?.msg || err.message) });
+        const details = safeErrorDetails(err);
+        res.status(400).json({ error: `Binance connection failed: ${details.message || 'request rejected'}` });
     }
 });
 
@@ -66,6 +81,15 @@ router.post('/api/sweeps/save-config', auth, async (req, res) => {
 
         const cleanApiKey = (binance_api_key && !binance_api_key.startsWith('***')) ? binance_api_key.trim() : null;
         const cleanApiSecret = (binance_api_secret && !binance_api_secret.startsWith('***')) ? binance_api_secret.trim() : null;
+        const [currentRows] = await db.query('SELECT binance_api_key, binance_api_secret FROM resellers WHERE id = ?', [req.reseller.id]);
+        const finalApiKey = cleanApiKey || currentRows[0]?.binance_api_key;
+        const finalApiSecret = cleanApiSecret || currentRows[0]?.binance_api_secret;
+        if ((binance_auto_sweep_enabled || binance_sweep_wallet_balance_enabled) && (!finalApiKey || !finalApiSecret)) {
+            return res.status(400).json({ error: 'Binance credentials are missing. Re-enter the API Key and Secret before enabling Auto-Sweep.' });
+        }
+        if (String(binance_sweep_type || 'lightning').toLowerCase() !== 'lightning') {
+            return res.status(400).json({ error: 'Bitcoin on-chain sweeping is disabled because the connected wallets only support automated Lightning payments.' });
+        }
 
         await db.query(
             `UPDATE resellers SET
@@ -93,9 +117,16 @@ router.post('/api/sweeps/save-config', auth, async (req, res) => {
             ]
         );
 
+        const [savedRows] = await db.query('SELECT binance_api_key, binance_api_secret, binance_auto_sweep_enabled FROM resellers WHERE id = ?', [req.reseller.id]);
+        if (!savedRows[0] || savedRows[0].binance_api_key !== (finalApiKey || null) || savedRows[0].binance_api_secret !== (finalApiSecret || null)) {
+            throw new Error('Binance settings could not be verified after saving.');
+        }
+
+        await PayoutService.resetSweepCooldown(req.reseller.id);
         res.json({ success: true, message: 'Auto-Sweep and Settlement settings saved successfully' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        logSafeError('[sweeps] Configuration save failed:', err);
+        res.status(500).json({ error: 'Auto-Sweep settings could not be saved' });
     }
 });
 
@@ -116,52 +147,77 @@ router.post('/api/sweeps/manual', auth, async (req, res) => {
             return res.status(400).json({ error: 'Please configure an active outbound gateway first (LNbits, Blink, Alby).' });
         }
 
-        const btcPrice = await PayoutService.getBtcPrice();
-        const totalSats = Math.round((amount / btcPrice) * 100000000);
+        const result = await PayoutService.runExclusive(reseller.id, async () => {
+            const btcPrice = await PayoutService.getBtcPrice();
+            const totalSats = Math.round((amount / btcPrice) * 100000000);
+            const availableSats = await PayoutService.getGatewayBalanceSats(reseller);
+            const feeReserveSats = Math.max(100, Math.ceil(totalSats * 0.01));
 
-        let bolt11 = null;
-        let destLabel = destination_address;
-
-        if (destination_type === 'binance') {
-            if (!reseller.binance_api_key || !reseller.binance_api_secret) {
-                return res.status(400).json({ error: 'Binance API credentials not configured.' });
+            if (totalSats + feeReserveSats > availableSats) {
+                const err = new Error(
+                    `Insufficient ${reseller.wallet_type.toUpperCase()} balance. ` +
+                    `Available: ${availableSats} sats; requested: ${totalSats} sats plus fee reserve.`
+                );
+                err.statusCode = 400;
+                throw err;
             }
-            const binanceInvoice = await BinanceService.getDepositInvoice({
-                apiKey: reseller.binance_api_key,
-                apiSecret: reseller.binance_api_secret,
-                amountSats: totalSats,
-                network: reseller.binance_sweep_type || 'LIGHTNING'
-            });
-            bolt11 = binanceInvoice.address;
-            destLabel = 'Binance Exchange Deposit';
-        } else if (destination_type === 'ln_address') {
-            if (!destination_address || !destination_address.includes('@')) {
-                return res.status(400).json({ error: 'Valid Lightning address is required.' });
+            let bolt11 = null;
+            let destLabel = destination_address;
+
+            if (destination_type === 'binance') {
+                if (String(reseller.binance_sweep_type || 'lightning').toLowerCase() !== 'lightning') {
+                    const err = new Error('Bitcoin on-chain sweeping is unavailable for this Lightning wallet. Select Lightning settlement first.');
+                    err.statusCode = 400;
+                    throw err;
+                }
+                if (!reseller.binance_api_key || !reseller.binance_api_secret) {
+                    const err = new Error('Binance API credentials not configured.');
+                    err.statusCode = 400;
+                    throw err;
+                }
+                const binanceInvoice = await BinanceService.getDepositInvoice({
+                    apiKey: reseller.binance_api_key,
+                    apiSecret: reseller.binance_api_secret,
+                    amountSats: totalSats,
+                    network: reseller.binance_sweep_type || 'LIGHTNING'
+                });
+                bolt11 = binanceInvoice.address;
+                destLabel = 'Binance Exchange Deposit';
+            } else if (destination_type === 'ln_address') {
+                if (!destination_address || !destination_address.includes('@')) {
+                    const err = new Error('Valid Lightning address is required.');
+                    err.statusCode = 400;
+                    throw err;
+                }
+                bolt11 = await PayoutService.resolveLightningAddress(destination_address, totalSats);
+            } else if (destination_type === 'bolt11') {
+                bolt11 = destination_address;
+            } else {
+                const err = new Error('Invalid destination type');
+                err.statusCode = 400;
+                throw err;
             }
-            bolt11 = await PayoutService.resolveLightningAddress(destination_address, totalSats);
-        } else if (destination_type === 'bolt11') {
-            bolt11 = destination_address;
-        } else {
-            return res.status(400).json({ error: 'Invalid destination type' });
-        }
 
-        const payRes = await PayoutService.executeGatewayPayment(reseller, bolt11, `Manual Sweep $${amount}`);
-
-        await db.query(
-            `INSERT INTO auto_sweeps (reseller_id, sweep_type, amount_sats, amount_usd, target_destination, txid, preimage, fee_sats, status)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed')`,
-            [reseller.id, destination_type === 'binance' ? 'binance_lightning' : 'instant_ln_payout', totalSats, amount, destLabel, payRes.txid, payRes.preimage || null, payRes.fee_sats || 0]
-        );
+            const payRes = await PayoutService.executeGatewayPayment(reseller, bolt11, `Manual Sweep $${amount}`);
+            await db.query(
+                `INSERT INTO auto_sweeps (reseller_id, sweep_type, amount_sats, amount_usd, target_destination, txid, preimage, fee_sats, status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completed')`,
+                [reseller.id, destination_type === 'binance' ? 'binance_lightning' : 'instant_ln_payout', totalSats, amount, destLabel, payRes.txid, payRes.preimage || null, payRes.fee_sats || 0]
+            );
+            return { totalSats, destLabel, payRes };
+        });
 
         res.json({
             success: true,
-            message: `Successfully swept $${amount} (${totalSats} sats) to ${destLabel}`,
-            txid: payRes.txid,
-            preimage: payRes.preimage
+            message: `Successfully swept $${amount} (${result.totalSats} sats) to ${result.destLabel}`,
+            txid: result.payRes.txid,
+            preimage: result.payRes.preimage
         });
     } catch (err) {
-        console.error('Manual sweep error:', err);
-        res.status(500).json({ error: err.message });
+        logSafeError('[sweeps] Manual sweep failed:', err);
+        const status = Number.isInteger(err.statusCode) && err.statusCode >= 400 && err.statusCode < 500 ? err.statusCode : 500;
+        const details = safeErrorDetails(err);
+        res.status(status).json({ error: status === 500 ? 'Manual sweep failed. Verify the destination and wallet configuration.' : details.message });
     }
 });
 

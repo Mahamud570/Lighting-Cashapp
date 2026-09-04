@@ -5,7 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lightning Pay — Reseller Dashboard</title>
   <meta name="description" content="Manage your Lightning Network payments, links, and sub-users.">
-  <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/app.css?v=18">
+  <style>
+    /* Critical mobile shell reset. Kept here so stale cached CSS cannot leave
+       the desktop sidebar offset active on phones. */
+    @media screen and (max-width: 768px) {
+      html, body { width: 100%; max-width: 100%; overflow-x: hidden !important; }
+      .layout { display: block !important; width: 100% !important; max-width: 100vw !important; }
+      .sidebar { position: fixed !important; transform: translateX(-100%) !important; }
+      .sidebar.open { transform: translateX(0) !important; }
+      .main {
+        margin-left: 0 !important;
+        width: 100% !important;
+        max-width: 100vw !important;
+        min-width: 0 !important;
+        transform: none !important;
+      }
+      .content, .page.active { width: 100% !important; min-width: 0 !important; }
+    }
+  </style>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
 </head>
 <body>
@@ -372,7 +390,11 @@
                       <input class="form-control" type="email" id="walletEmail" placeholder="yourname@walletofsatoshi.com">
                       <div class="form-hint">Sats resolve directly to your wallet on checkout creation.</div>
                     </div>
-                    <button class="btn btn-primary btn-sm" onclick="saveEmailWallet(event)">Save Lightning Address</button>
+                    <div class="flex gap-8">
+                      <button class="btn btn-ghost btn-sm" id="btnTestEmail" onclick="testEmailWallet(event)">Test Address</button>
+                      <button class="btn btn-primary btn-sm" onclick="saveEmailWallet(event)">Save Lightning Address</button>
+                    </div>
+                    <div id="emailTestOutput" class="mt-12" style="display:none;padding:12px 14px;border-radius:10px;font-size:12px;font-weight:600;"></div>
                   </div>
                 </div>
               </label>
@@ -507,7 +529,7 @@
                 <label class="form-label">Deposit Network</label>
                 <select class="form-control" id="binanceSweepType">
                   <option value="lightning">Bitcoin Lightning (Instant)</option>
-                  <option value="onchain">Bitcoin On-Chain (BTC)</option>
+                  <option value="onchain" disabled>Bitcoin On-Chain (not supported by connected Lightning wallets)</option>
                 </select>
               </div>
             </div>
@@ -692,6 +714,16 @@
               </select>
             </div>
           </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Link Preview</label>
+              <select class="form-control" id="newPreviewMode">
+                <option value="full">Full Preview (recommended)</option>
+                <option value="imessage_compact">iMessage Personalized Green Preview</option>
+              </select>
+              <div class="form-hint">Shows “Pay [title]” plus a personalized green image card in iMessage. Other supported apps keep the full preview.</div>
+            </div>
+          </div>
           <div class="form-row" id="amountRangeRow">
             <div class="form-group">
               <label class="form-label">Min Amount ($)</label>
@@ -726,6 +758,22 @@
               </select>
             </div>
           </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label class="form-label">Customer Fee</label>
+              <select class="form-control" id="newChargeMode" onchange="toggleLinkFeeFields('new')">
+                <option value="inherit">Use main reseller fee</option>
+                <option value="none">No fee</option>
+                <option value="fixed">Fixed fee ($)</option>
+                <option value="percent">Percentage fee (%)</option>
+              </select>
+              <div class="form-hint">The fee is added to the payer's entered amount.</div>
+            </div>
+            <div class="form-group d-none" id="newChargeValueGroup">
+              <label class="form-label" id="newChargeValueLabel">Fee Value</label>
+              <input class="form-control" id="newChargeValue" type="number" min="0" step="0.01" value="0">
+            </div>
+          </div>
           <div class="form-group">
             <label class="form-label">Payment Theme</label>
             <div class="themes-grid" id="createThemeGrid" style="grid-template-columns: repeat(auto-fill, minmax(150px,1fr))"></div>
@@ -749,12 +797,12 @@
             <table>
               <thead>
                 <tr>
-                  <th>Payment Link</th><th>Owner</th><th>Theme</th><th>Amount</th>
+                  <th>Payment Link</th><th>Owner</th><th>Theme</th><th>Amount</th><th>Fee</th>
                   <th>Clicks</th><th>Invoices</th><th>Status</th><th>Actions</th>
                 </tr>
               </thead>
               <tbody id="linksTable">
-                <tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🔗</div><div class="empty-text">No payment links yet. Create your first!</div></div></td></tr>
+                <tr><td colspan="9"><div class="empty-state"><div class="empty-icon">🔗</div><div class="empty-text">No payment links yet. Create your first!</div></div></td></tr>
               </tbody>
             </table>
           </div>
@@ -926,7 +974,7 @@
           <div class="form-row">
             <div class="form-group">
               <label class="form-label">Password *</label>
-              <input class="form-control" type="password" id="newUserPass" placeholder="Minimum 6 characters">
+              <input class="form-control" type="password" id="newUserPass" placeholder="Minimum 8 characters" minlength="8" autocomplete="new-password">
             </div>
             <div class="form-group">
               <label class="form-label">Rate per $1</label>

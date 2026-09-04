@@ -1,88 +1,56 @@
-# 🛡️ STABILITY & FULL AUDIT REPORT — Lightning Pay
+# Lightning Pay Stabilization Report
 
-## 1. Executive Summary
-A comprehensive stabilization audit and security remediation was executed strictly in accordance with `LIGHTNING_CASHAPP_STABILIZATION.md` to eliminate regression loops, secure financial settlements, and harden authentication and data integrity.
+Date: 2026-08-27
+Source: local extracted Node.js ZIP (`lighting-cashapp-complete-merged`); no Git repository was used.
 
-### Architectural Highlights:
-- **Backend:** Node.js + Express.js with pure WebAssembly SQLite (`sql.js`) persistent storage.
-- **Role Hierarchy:** Master/Owner (`/owner`), Reseller (`/reseller`), and Sub-User/Merchant (`/subuser`).
-- **Financial & Settlement:** Cash App deep-linking, Lightning QR & BOLT11 invoices, LNbits, Blink, Alby / Nostr Wallet Connect (NWC), OpenNode, BTCPay Server, automated Binance HMAC-SHA256 sweeps, and Telegram real-time push alerts.
-- **Verification Status:** 16/16 Test Suites Passed (120/120 Tests Passing).
+## Corrected behavior
 
----
+- Payments persist the exact integer satoshi amount used to create the invoice.
+- Merchant payout and Binance settlement use a single allocation, so the same received funds cannot be allocated twice.
+- Settlement operations use persistent, operation-specific jobs with a unique `(payment_id, operation_key)` constraint.
+- Duplicate workers cannot claim the same payout, Binance sweep, or Telegram payment notification.
+- Temporary failures may retry; invalid credentials become permanent failures; ambiguous timeouts become `unknown` and are not paid again automatically.
+- Stale `processing` jobs are quarantined as `unknown` after restart instead of being blindly repeated.
+- Manual settlement, payment settlement, and scheduled wallet sweep share a reseller-wallet lock within the Node.js process.
+- Zero/below-minimum Binance allocations are held without repeatedly creating failed history records.
+- Unsupported Binance on-chain configuration is rejected because the connected gateways execute Lightning payments.
+- Telegram payment confirmation is sent immediately after receipt confirmation, uses the stored integer satoshi amount, and is idempotent.
+- Existing QR preview, LNbits, Blink, payment-page, and dashboard behavior was preserved.
+- Existing provider errors are redacted before being shown publicly.
 
-## 2. Stabilization Plan Compliance Matrix
+## Database migration
 
-| Section | Issue & Requirement | Implemented Fix | Verification |
-| :--- | :--- | :--- | :--- |
-| **§1.1** | Webhook Authentication & Idempotency | Added HMAC signature validation (OpenNode/BTCPay), node settlement verification (`InvoiceChecker`), and atomic state transitions (`WHERE status = 'pending'`). | `PASS` |
-| **§2** | Socket.io Authorization | Authenticated Socket.io handshakes via JWT cookie and restricted room subscriptions (`reseller:${id}`) to room owners only. | `PASS` |
-| **§3** | Startup Password Seeding Bug | Changed seed logic to `INSERT ... ON CONFLICT DO NOTHING`. Server restarts now strictly preserve user-changed passwords forever. | `PASS` |
-| **§4** | Plaintext Password Elimination | Removed `plain_password` columns from database inserts, updates, and API responses. Only bcrypt hashes are stored. | `PASS` |
-| **§5** | Session Revocation on Password Change | Password changes in `/api/security/password` and master resets in `/api/owner/resellers/:id/reset-password` immediately revoke old sessions. | `PASS` |
-| **§6 & §15** | Fixed Payment Amount Enforcement | Backend strictly validates exact amount match (`Math.abs(amount - fixed) < 0.001`) on fixed links and positive finite numeric bounds on flexible links. | `PASS` |
-| **§7** | Cross-Reseller Sub-User Authorization | Verified that `sub_user_id` belongs to the authenticated reseller (`WHERE id = ? AND reseller_id = ?`) across link creation and assignment. | `PASS` |
-| **§10** | Consolidated 2FA Policy | Unified 2FA disable requirements across `routes/security.js` and `routes/twoFactor.js` to strictly require current password + TOTP code. | `PASS` |
-| **§12** | Removed Hardcoded Wallet Fallback | Missing or invalid gateway configurations return safe client errors without routing funds to fallback addresses. | `PASS` |
-| **§17** | ModSecurity Directive Cleanup | Removed `SecRuleEngine Off` directives from `.htaccess` and `public/.htaccess`. | `PASS` |
+Startup adds `payments.amount_sats` and creates `settlement_jobs` without deleting existing users, wallet credentials, links, payments, or history. Both SQLite and MariaDB adapters contain the required compatibility translations.
 
----
-
-## 3. Subsystem Audit Details
-
-### A. Authentication & RBAC (Pass)
-- **Master/Owner:** Authenticates at `/api/auth/login`, redirected to `/owner`. Accesses `/api/owner/*` endpoints. Verified.
-- **Reseller:** Authenticates at `/api/auth/login`, redirected to `/reseller`. Role protection prevents access to `/api/owner/*` (403 Forbidden). Verified.
-- **Sub-User / Merchant:** Authenticates with email and plain/bcrypt credentials. Role protection prevents access to unauthorized management routes. Verified.
-- **Logout:** Invalidation deletes token hash from `sessions` table and clears HTTP-only cookie. Verified.
-
-### B. Database & Persistence (Pass)
-- Pure WASM SQLite (`sql.js`) eliminates binary dependency conflicts on cPanel/Passenger.
-- Parameterized queries prevent SQL injection across all 13 routes.
-- Schema auto-migrations handle backward compatibility on server startup.
-
-### C. Gateways & Settlement (Pass)
-- **LNbits:** Full BOLT11 generation and webhook fallback for public instances (`demo.lnbits.com`).
-- **Nostr Wallet Connect (NWC):** Connects to CoinOS and Alby via NWC connection string URI.
-- **Binance Auto-Sweep:** Synchronized server timestamping (-1021 protection), minimum threshold gating (10,000 sat limit), and automatic balance sweeping.
-- **Telegram Notifications:** Real-time push alert dispatcher for payment confirmations and settlement events.
-
----
-
-## 4. Test Evidence Summary
+## Verification actually run
 
 ```text
-==================================================
-TEST SUITE RUN REPORT
-==================================================
-PASS tests/unit/middleware/auth.test.js
-PASS tests/unit/services/blinkPool.test.js
-PASS tests/unit/services/blinkService.test.js
-PASS tests/unit/services/geoIpService.test.js
-PASS tests/unit/services/invoiceChecker.test.js
-PASS tests/unit/services/payoutService.test.js
-PASS tests/integration/analytics.test.js
-PASS tests/integration/links.test.js
-PASS tests/integration/lnbitsBinanceSweeps.test.js
-PASS tests/integration/owner.test.js
-PASS tests/integration/ownerConfig.test.js
-PASS tests/integration/ownerPasswords.test.js
-PASS tests/integration/pay.test.js
-PASS tests/integration/security.test.js
-PASS tests/integration/twoFactor.test.js
-PASS tests/e2e/user_flows.test.js
+node --check services/telegramService.js
+node --check services/payoutService.js
+node --check routes/sweeps.js
+PASS
 
-Test Suites: 16 passed, 16 total
-Tests:       118 passed, 118 total
-Snapshots:   0 total
-Time:        5.87 s
-==================================================
+npm test -- --runInBand --detectOpenHandles
+Test Suites: 24 passed, 24 total
+Tests:       173 passed, 173 total
+
+npm run test:coverage -- --runInBand
+Test Suites: 24 passed, 24 total
+Tests:       173 passed, 173 total
+Coverage: statements 49.92%, branches 37.29%, functions 42.69%, lines 53.45%
+Result: coverage command fails the package's configured global 80/70/80/80 thresholds.
 ```
 
----
+The package has no formatter, linter, type-check, or production-build script, so those checks cannot be claimed. This is a server-rendered Node.js application and does not require a separate frontend build.
 
-## 5. Deployment Instructions
-1. Download or upload **`deploy.zip`** (0.23 MB) to `/home/portalca/lightning-pay-production`.
-2. Extract and overwrite existing files.
-3. Click **Restart** in the cPanel Node.js Application Manager.
-4. Verify your payment pages and dashboard tabs.
+## Deployment safety
+
+The deployment archive intentionally excludes `.env` and `data/` so extraction cannot overwrite production credentials or the live database. It includes `node_modules` because the target cPanel account has no terminal for `npm ci`.
+
+After extracting over `/home/portalca/lightning-pay-production`, restart the cPanel Node.js application once. Keep the existing production `.env` and database in place.
+
+## Remaining limitations
+
+- The configured global coverage threshold is not met; expanding test coverage is separate from the repaired functional paths.
+- Cross-process serialization of different operations on one wallet still relies on cPanel running one Node.js application process. Same-operation duplicates remain protected by the database uniqueness constraint.
+- Real transfers against production LNbits, Blink, Binance, and Telegram accounts cannot be executed in local tests without using live funds and credentials.

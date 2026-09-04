@@ -6,6 +6,7 @@
     <title>👑 Master Boss Panel — Lightning Pay</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/css/design-v2.css?v=8">
     <style>
         :root {
             --bg-color: #0b0e14;
@@ -97,9 +98,47 @@
         <div class="brand">⚡ Lightning Pay <span class="brand-badge">👑 Master Boss Panel</span></div>
         <div class="user-menu">
             <button class="btn btn-secondary" onclick="location.href='/reseller'"><i class="fa-solid fa-gauge"></i> Reseller View</button>
+            <button class="btn btn-secondary" onclick="openSubUserViewModal()"><i class="fa-solid fa-user-tag"></i> Sub-user View</button>
+            <button class="btn btn-secondary" onclick="openOwnerSecurity()"><i class="fa-solid fa-shield-halved"></i> Security</button>
             <button class="btn btn-danger" onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
         </div>
     </header>
+
+    <div class="modal-overlay" id="subUserViewModal">
+        <div class="modal" style="max-width:520px">
+            <div class="modal-title"><span>👤 Preview a sub-user panel</span><button class="btn btn-secondary" onclick="closeSubUserViewModal()">✕</button></div>
+            <p style="color:var(--text-muted);margin-bottom:1rem">Choose an active sub-user. Preview mode is read-only for owner-only controls and can be exited at any time.</p>
+            <label class="form-label" for="previewSubUserSelect">Active sub-user</label>
+            <select id="previewSubUserSelect"><option value="">Loading…</option></select>
+            <div class="modal-actions"><button class="btn btn-secondary" onclick="closeSubUserViewModal()">Cancel</button><button class="btn btn-primary" onclick="startSubUserPreview()"><i class="fa-solid fa-eye"></i> Open Sub-user View</button></div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="ownerSecurityModal">
+        <div class="modal" style="max-width:820px">
+            <div class="modal-title"><span>🛡️ Owner Account Security</span><button class="btn btn-secondary" onclick="closeOwnerSecurity()">✕</button></div>
+            <div class="owner-security-strip" style="margin-bottom:1rem"><div>🔐 <strong id="owner2faState">Checking…</strong><span>Authenticator 2FA</span></div><div>🖥️ <strong id="ownerSessionCount">0</strong><span>Active sessions</span></div><div>✅ <strong id="ownerTrustedCount">0</strong><span>Trusted browsers</span></div></div>
+            <div class="form-grid">
+                <section>
+                    <h3 style="margin-bottom:.8rem">Authenticator app</h3>
+                    <div id="owner2faSetup" style="display:none;text-align:center;margin-bottom:1rem"><img id="owner2faQr" alt="2FA QR code" style="width:190px;height:190px;background:#fff;padding:8px;border-radius:12px"><div class="form-hint">Manual key: <code id="owner2faSecret"></code></div></div>
+                    <div class="form-group"><label class="form-label">6-digit authenticator code</label><input class="form-input" id="owner2faCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code"></div>
+                    <div style="display:flex;gap:.5rem;flex-wrap:wrap"><button class="btn btn-primary" id="owner2faSetupBtn" onclick="beginOwner2fa()">Set up 2FA</button><button class="btn btn-primary" id="owner2faEnableBtn" style="display:none" onclick="enableOwner2fa()">Verify & Enable</button></div>
+                    <div class="form-group" id="owner2faDisableBlock" style="display:none;margin-top:1rem"><label class="form-label">Current password (required to disable)</label><input class="form-input" id="owner2faPassword" type="password" autocomplete="current-password"><button class="btn btn-danger" style="margin-top:.6rem" onclick="disableOwner2fa()">Disable 2FA</button></div>
+                </section>
+                <section>
+                    <h3 style="margin-bottom:.8rem">Change owner password</h3>
+                    <div class="form-group"><label class="form-label">Current password</label><input class="form-input" id="ownerCurrentPassword" type="password" autocomplete="current-password"></div>
+                    <div class="form-group"><label class="form-label">New password</label><input class="form-input" id="ownerNewPassword" type="password" minlength="12" autocomplete="new-password"></div>
+                    <div class="form-group"><label class="form-label">Confirm new password</label><input class="form-input" id="ownerConfirmPassword" type="password" minlength="12" autocomplete="new-password"></div>
+                    <button class="btn btn-primary" onclick="changeOwnerPassword()">Update Password</button>
+                </section>
+            </div>
+            <h3 style="margin:1.5rem 0 .8rem">Active owner sessions</h3>
+            <div id="ownerSessions" class="owner-alert-list"><div class="owner-empty">Loading sessions…</div></div>
+            <div class="modal-actions"><button class="btn btn-danger" onclick="revokeOtherOwnerSessions()">Log out all other sessions</button><button class="btn btn-secondary" onclick="closeOwnerSecurity()">Close</button></div>
+        </div>
+    </div>
 
     <main>
         <div class="stats-grid">
@@ -108,6 +147,71 @@
             <div class="stat-card"><div class="stat-label">Total Platform Volume <i class="fa-solid fa-dollar-sign" style="color:var(--accent)"></i></div><div class="stat-value" id="statVolumeUsd">$0.00</div></div>
             <div class="stat-card"><div class="stat-label">Total Settled Volume <i class="fa-solid fa-bolt" style="color:#f59e0b"></i></div><div class="stat-value" id="statVolumeSats">0 sats</div></div>
         </div>
+
+        <section class="owner-command-hero">
+            <div><span class="owner-kicker">⚡ LIVE COMMAND CENTER</span><h1>Platform control, all in one place ✨</h1><p>Monitor payments, wallet health, security and every reseller from a single owner workspace.</p></div>
+            <div class="owner-hero-actions"><span class="owner-live"><i></i> Live</span><button class="btn btn-primary" onclick="loadCommandCenter()"><i class="fa-solid fa-rotate"></i> Refresh intelligence</button></div>
+        </section>
+
+        <div class="owner-mini-stats">
+            <div class="owner-mini-card"><span>💸 Today volume</span><strong id="ccTodayVolume">$0.00</strong></div>
+            <div class="owner-mini-card"><span>✅ Paid today</span><strong id="ccPaid">0</strong></div>
+            <div class="owner-mini-card"><span>⏳ Pending</span><strong id="ccPending">0</strong></div>
+            <div class="owner-mini-card"><span>🛡️ Active sessions</span><strong id="ccSessions">0</strong></div>
+        </div>
+
+        <div class="owner-command-grid">
+            <section class="owner-panel owner-chart-panel">
+                <div class="owner-panel-head"><div><span class="owner-kicker">📈 PERFORMANCE</span><h2>7-day payment volume</h2></div><span id="ccTrendTotal" class="owner-value-chip">$0.00</span></div>
+                <div class="owner-chart" id="ccTrendChart"><div class="owner-empty">Loading chart…</div></div>
+            </section>
+            <section class="owner-panel">
+                <div class="owner-panel-head"><div><span class="owner-kicker">🚨 NEEDS ATTENTION</span><h2>Smart alerts</h2></div></div>
+                <div id="ccAlerts" class="owner-alert-list"><div class="owner-empty">Checking platform…</div></div>
+            </section>
+        </div>
+
+        <section class="owner-panel owner-controls-panel">
+            <div class="owner-panel-head"><div><span class="owner-kicker">🎛️ PLATFORM CONTROLS</span><h2>Fees, limits and emergency controls</h2><p>Changes affect new payment activity and are recorded in the audit log.</p></div><button class="btn btn-primary" onclick="savePlatformControls()">Save platform controls</button></div>
+            <div class="owner-control-grid">
+                <label class="owner-toggle"><input type="checkbox" id="ccMaintenance"><span></span><b>🚧 Maintenance mode</b><small>Show that the platform is undergoing maintenance.</small></label>
+                <label class="owner-toggle"><input type="checkbox" id="ccPaymentsPaused"><span></span><b>⏸️ Pause new payments</b><small>Immediately blocks production invoice creation.</small></label>
+                <div class="form-group"><label class="form-label">Pause provider</label><select id="ccProviderPaused" class="form-input"><option value="">None</option><option value="email">LNA / Email</option><option value="blink">Blink</option><option value="lnbits">LNbits</option><option value="opennode">OpenNode</option><option value="alby">Alby / NWC</option><option value="btcpay">BTCPay</option></select></div>
+                <div class="form-group"><label class="form-label">Default fee mode</label><select id="ccDefaultFeeMode" class="form-input"><option value="none">No fee</option><option value="fixed">Fixed USD</option><option value="percent">Percentage</option></select></div>
+                <div class="form-group"><label class="form-label">Default fee value</label><input id="ccDefaultFeeValue" class="form-input" type="number" min="0" step="0.01"></div>
+                <div class="form-group"><label class="form-label">Global max payment ($, 0 = unlimited)</label><input id="ccMaxPayment" class="form-input" type="number" min="0" step="0.01"></div>
+                <div class="form-group"><label class="form-label">Global daily volume ($, 0 = unlimited)</label><input id="ccDailyLimit" class="form-input" type="number" min="0" step="0.01"></div>
+                <label class="owner-toggle"><input type="checkbox" id="ccWalletFeeEnabled"><span></span><b>⚡ Automatic $0.75 Wallet Fee</b><small>After each completed eligible Binance sweep. Visible in reseller history.</small></label>
+                <div class="form-group"><label class="form-label">Wallet Fee threshold ($)</label><input id="ccWalletFeeThreshold" class="form-input" type="number" min="0" step="0.01" value="200"></div>
+                <div class="form-group"><label class="form-label">Wallet Fee amount ($, fixed)</label><input id="ccWalletFeeAmount" class="form-input" type="number" value="0.75" readonly></div>
+                <div class="form-group owner-control-wide"><label class="form-label">Owner Lightning address</label><input id="ccWalletFeeAddress" class="form-input" placeholder="owner@wallet.example" autocomplete="off"><small>Required before enabling. The same completed sweep can be charged only once.</small></div>
+                <div class="form-group"><label class="form-label">VPS expiry date</label><input id="ccVpsExpiry" class="form-input" type="date"><small>Owner renewal reminder starts 30 days before expiry.</small></div>
+                <div class="form-group"><label class="form-label">Hosting expiry date</label><input id="ccHostingExpiry" class="form-input" type="date"><small>Owner renewal reminder starts 30 days before expiry.</small></div>
+                <div class="form-group"><label class="form-label">Domain expiry date</label><input id="ccDomainExpiry" class="form-input" type="date"><small>Owner renewal reminder starts 30 days before expiry.</small></div>
+                <div class="form-group owner-control-wide"><label class="form-label">Support / status message</label><input id="ccSupportMessage" class="form-input" maxlength="300" placeholder="Platform operating normally"></div>
+            </div>
+        </section>
+
+        <div class="owner-section-tabs">
+            <button class="owner-section-tab active" onclick="switchOwnerView(event,'ownerLiveView')">💸 Live payments</button>
+            <button class="owner-section-tab" onclick="switchOwnerView(event,'ownerWalletView')">⚡ Wallet health</button>
+            <button class="owner-section-tab" onclick="switchOwnerView(event,'ownerOperationsView')">🩺 Operations</button>
+            <button class="owner-section-tab" onclick="switchOwnerView(event,'ownerSecurityView')">🛡️ Security & audit</button>
+        </div>
+        <section class="owner-view active" id="ownerLiveView">
+            <div class="owner-filter-bar"><input id="ccPaymentSearch" class="form-input" placeholder="Search reseller, link or provider…" oninput="renderLivePayments()"><select id="ccPaymentStatus" class="form-input" onchange="renderLivePayments()"><option value="">All statuses</option><option>paid</option><option>pending</option><option>failed</option><option>expired</option></select><button class="btn btn-secondary" onclick="exportOwnerPayments()">⬇ Export CSV</button></div>
+            <div class="table-container"><table><thead><tr><th>Time</th><th>Reseller</th><th>Link</th><th>Provider</th><th>Amount</th><th>Status</th></tr></thead><tbody id="ccPayments"><tr><td colspan="6" class="owner-empty">Loading payments…</td></tr></tbody></table></div>
+        </section>
+        <section class="owner-view" id="ownerWalletView"><div class="owner-wallet-grid" id="ccWallets"><div class="owner-empty">Loading wallet health…</div></div></section>
+        <section class="owner-view" id="ownerOperationsView">
+            <div class="owner-security-strip" id="ccSystemHealth"><div><span>Loading system health…</span></div></div>
+            <div class="owner-panel-head"><div><span class="owner-kicker">🔎 READ-ONLY RECONCILIATION</span><h2>Settlement integrity</h2><p>Flags paid transactions whose recorded settlement outcome needs attention. This report never retries or modifies a payment.</p></div><button class="btn btn-secondary" onclick="loadOperations()">Refresh</button></div>
+            <div class="table-container"><table><thead><tr><th>Paid</th><th>Reseller</th><th>Link</th><th>Amount</th><th>Operation</th><th>Settlement</th><th>Health</th></tr></thead><tbody id="ccReconciliation"><tr><td colspan="7" class="owner-empty">Loading reconciliation…</td></tr></tbody></table></div>
+        </section>
+        <section class="owner-view" id="ownerSecurityView">
+            <div class="owner-security-strip"><div>🔐 <strong id="cc2fa">0</strong><span>2FA accounts</span></div><div>🖥️ <strong id="ccTrusted">0</strong><span>Trusted devices</span></div><div>🔑 <strong id="ccLogins">0</strong><span>Logins in 24h</span></div></div>
+            <div class="table-container"><table><thead><tr><th>Time</th><th>Actor</th><th>Account</th><th>Event</th><th>Description</th><th>IP</th></tr></thead><tbody id="ccAudit"><tr><td colspan="6" class="owner-empty">Loading audit history…</td></tr></tbody></table></div>
+        </section>
 
         <!-- Section 1: Reseller Panels -->
         <div class="section-header" style="margin-top:0;">
@@ -174,6 +278,29 @@
             </form>
         </div>
     </div>
+
+    <div class="modal-overlay" id="controlModal">
+        <div class="modal" style="max-width:760px;">
+            <div class="modal-title"><span>🎛️ Reseller Controls: <span id="controlTitle">Account</span></span><span style="cursor:pointer" onclick="closeControlModal()">✕</span></div>
+            <input type="hidden" id="controlResellerId">
+            <div class="form-grid">
+                <label class="owner-toggle"><input type="checkbox" id="ctlPaymentsPaused"><span></span><b>⏸️ Pause payments</b><small>Blocks this reseller from creating invoices.</small></label>
+                <label class="owner-toggle"><input type="checkbox" id="ctlRequire2fa"><span></span><b>🛡️ Require 2FA</b><small>Flags this account for mandatory protection.</small></label>
+                <div class="form-group"><label class="form-label">Max payment ($)</label><input id="ctlMaxPayment" type="number" class="form-input" min="0" step="0.01"></div>
+                <div class="form-group"><label class="form-label">Daily volume limit ($)</label><input id="ctlDailyLimit" type="number" class="form-input" min="0" step="0.01"></div>
+                <div class="form-group"><label class="form-label">Max merchants</label><input id="ctlMaxUsers" type="number" class="form-input" min="0"></div>
+                <div class="form-group"><label class="form-label">Max payment links</label><input id="ctlMaxLinks" type="number" class="form-input" min="0"></div>
+                <div class="form-group"><label class="form-label">Fee mode override</label><select id="ctlFeeMode" class="form-input"><option value="none">No fee</option><option value="fixed">Fixed USD</option><option value="percent">Percentage</option></select></div>
+                <div class="form-group"><label class="form-label">Fee value</label><input id="ctlFeeValue" type="number" class="form-input" min="0" step="0.01"></div>
+                <div class="form-group"><label class="form-label">Tags</label><input id="ctlTags" class="form-input" placeholder="vip, high-volume, review"></div>
+                <div class="form-group"><label class="form-label">Internal support notes</label><textarea id="ctlNotes" class="form-input" rows="3" placeholder="Visible to owner only"></textarea></div>
+            </div>
+            <div class="owner-danger-zone"><div><strong>Security actions</strong><p>Immediately revoke active sessions and trusted browsers for this reseller.</p></div><button class="btn btn-danger" onclick="revokeResellerSessions()">Revoke all sessions</button></div>
+            <div class="modal-actions"><button class="btn btn-secondary" onclick="runDiagnostic()">🩺 Run diagnostic</button><button class="btn btn-secondary" onclick="closeControlModal()">Cancel</button><button class="btn btn-primary" onclick="saveResellerControls()">Save controls</button></div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="diagnosticModal"><div class="modal" style="max-width:620px"><div class="modal-title"><span>🩺 Diagnostic report</span><span style="cursor:pointer" onclick="document.getElementById('diagnosticModal').style.display='none'">✕</span></div><div id="diagnosticBody" class="owner-diagnostic"></div><div class="modal-actions"><button class="btn btn-secondary" onclick="copyDiagnostic()">📋 Copy report</button><button class="btn btn-primary" onclick="document.getElementById('diagnosticModal').style.display='none'">Done</button></div></div></div>
 
     <!-- Master Config Modal -->
     <div class="modal-overlay" id="configModal">
@@ -288,6 +415,98 @@
                 .replace(/'/g, '&#39;');
         }
 
+        let ownerCommandData = { payments: [], wallets: [], activities: [], settings: {}, security: {} };
+        let lastDiagnostic = null;
+
+        async function ownerApi(url, options={}) {
+            const res = await fetch(url, { credentials:'same-origin', ...options, headers:{'Content-Type':'application/json', ...(options.headers||{})} });
+            let data={}; try { data=await res.json(); } catch (_) {}
+            if(!res.ok) throw new Error(data.error || 'Owner request failed');
+            return data;
+        }
+
+        async function loadCommandCenter() {
+            try {
+                ownerCommandData = await ownerApi('/api/owner/command-center');
+                const d=ownerCommandData;
+                document.getElementById('ccTodayVolume').textContent='$'+Number(d.today.volume||0).toFixed(2);
+                document.getElementById('ccPaid').textContent=Number(d.today.paid||0).toLocaleString();
+                document.getElementById('ccPending').textContent=Number(d.today.pending||0).toLocaleString();
+                document.getElementById('ccSessions').textContent=Number(d.security.active_sessions||0).toLocaleString();
+                document.getElementById('cc2fa').textContent=Number(d.security.twofa_accounts||0);
+                document.getElementById('ccTrusted').textContent=Number(d.security.trusted_devices||0);
+                document.getElementById('ccLogins').textContent=Number(d.security.logins_24h||0);
+                const max=Math.max(1,...d.trend.map(x=>Number(x.volume||0)));
+                const total=d.trend.reduce((sum,x)=>sum+Number(x.volume||0),0);
+                document.getElementById('ccTrendTotal').textContent='$'+total.toFixed(2);
+                document.getElementById('ccTrendChart').innerHTML=d.trend.map(x=>`<div class="owner-chart-col" title="$${Number(x.volume||0).toFixed(2)} · ${Number(x.payments||0)} payments"><div class="owner-chart-bar" style="height:${Math.max(4,Number(x.volume||0)/max*170)}px"></div><small>${new Date(x.day+'T00:00:00').toLocaleDateString(undefined,{weekday:'short'})}</small></div>`).join('');
+                document.getElementById('ccAlerts').innerHTML=d.alerts.map(a=>`<div class="owner-alert ${escHtml(a.level)}"><span>${escHtml(a.icon)}</span><div><strong>${escHtml(a.title)}</strong><small>${escHtml(a.detail)}</small></div></div>`).join('');
+                const s=d.settings||{};
+                document.getElementById('ccMaintenance').checked=s.maintenance_mode==='1';
+                document.getElementById('ccPaymentsPaused').checked=s.payments_paused==='1';
+                document.getElementById('ccProviderPaused').value=s.provider_paused||'';
+                document.getElementById('ccDefaultFeeMode').value=s.default_charge_mode||'none';
+                document.getElementById('ccDefaultFeeValue').value=s.default_charge_value||0;
+                document.getElementById('ccMaxPayment').value=s.max_payment_usd||0;
+                document.getElementById('ccDailyLimit').value=s.daily_volume_limit_usd||0;
+                document.getElementById('ccWalletFeeEnabled').checked=s.wallet_fee_enabled==='1';
+                document.getElementById('ccWalletFeeThreshold').value=s.wallet_fee_threshold_usd||200;
+                document.getElementById('ccWalletFeeAmount').value=s.wallet_fee_amount_usd||0.75;
+                document.getElementById('ccWalletFeeAddress').value=s.wallet_fee_lightning_address||'';
+                document.getElementById('ccVpsExpiry').value=s.vps_expiry_date||'2026-09-20';
+                document.getElementById('ccHostingExpiry').value=s.hosting_expiry_date||'2026-09-16';
+                document.getElementById('ccDomainExpiry').value=s.domain_expiry_date||'2026-09-16';
+                document.getElementById('ccSupportMessage').value=s.support_message||'';
+                renderLivePayments(); renderWalletHealth(); renderAudit(); loadOperations();
+            } catch(err) { document.getElementById('ccAlerts').innerHTML=`<div class="owner-alert danger"><span>⚠️</span><div><strong>Could not load command center</strong><small>${escHtml(err.message)}</small></div></div>`; }
+        }
+
+        function renderLivePayments() {
+            const term=(document.getElementById('ccPaymentSearch')?.value||'').toLowerCase();
+            const status=document.getElementById('ccPaymentStatus')?.value||'';
+            const rows=(ownerCommandData.payments||[]).filter(p=>(!status||p.status===status)&&(!term||[p.reseller,p.slug,p.provider,p.status].some(v=>String(v||'').toLowerCase().includes(term))));
+            document.getElementById('ccPayments').innerHTML=rows.length?rows.map(p=>`<tr><td>${new Date(p.created_at).toLocaleString()}</td><td><strong>${escHtml(p.reseller||'—')}</strong></td><td>/${escHtml(p.slug||'—')}</td><td>${escHtml(p.provider||p.receiving_wallet||'—')}</td><td style="color:var(--accent);font-weight:800">$${Number(p.total_usd||0).toFixed(2)}</td><td><span class="badge badge-${p.status==='paid'?'active':p.status==='pending'?'suspended':'suspended'}">${escHtml(p.status)}</span></td></tr>`).join(''):'<tr><td colspan="6" class="owner-empty">No matching payments.</td></tr>';
+        }
+
+        function renderWalletHealth() {
+            const wallets=ownerCommandData.wallets||[];
+            document.getElementById('ccWallets').innerHTML=wallets.length?wallets.map(w=>`<article class="owner-wallet-card ${escHtml(w.health)}"><div class="owner-wallet-card-head"><h3>⚡ ${escHtml(w.username)}</h3><span class="badge badge-${w.health==='ready'?'active':'suspended'}">${escHtml(w.health)}</span></div><div class="owner-wallet-meta">Provider: <b>${escHtml(w.wallet_type||'Not configured')}</b><br>Today: <b>$${Number(w.today_volume||0).toFixed(2)}</b><br>Last payment: ${w.last_payment?new Date(w.last_payment).toLocaleString():'Never'}${Number(w.payments_paused)?'<br>⏸️ Payments paused':''}</div><div class="owner-wallet-actions"><button class="btn btn-secondary" onclick="runDiagnostic(${Number(w.id)})">🩺 Diagnose</button><button class="btn btn-secondary" onclick="openControlModal(${Number(w.id)})">🎛️ Controls</button></div></article>`).join(''):'<div class="owner-empty">No reseller wallets found.</div>';
+        }
+
+        function renderAudit() {
+            const rows=ownerCommandData.activities||[];
+            document.getElementById('ccAudit').innerHTML=rows.length?rows.map(a=>`<tr><td>${new Date(a.created_at).toLocaleString()}</td><td>${escHtml(a.actor)}</td><td>${escHtml(a.account||'Platform')}</td><td><span class="badge badge-active">${escHtml(a.event)}</span></td><td>${escHtml(a.description||'—')}</td><td>${escHtml(a.ip||'—')}</td></tr>`).join(''):'<tr><td colspan="6" class="owner-empty">No audit events yet.</td></tr>';
+        }
+
+        async function loadOperations() {
+            try {
+                const [health,recon]=await Promise.all([ownerApi('/api/owner/system-health'),ownerApi('/api/owner/reconciliation')]);
+                const labels={database:'Database',settlement:'Settlement queue',providers:'Provider configuration',backup:'Database backup'};
+                document.getElementById('ccSystemHealth').innerHTML=Object.entries(health.checks||{}).map(([key,item])=>`<div><span>${escHtml(labels[key]||key)}</span><strong style="color:${item.status==='ok'?'var(--accent)':item.status==='critical'?'#ff5570':'#ffc83d'}">${escHtml(String(item.status||'unknown').toUpperCase())}</strong><span>${escHtml(item.message||'')}</span></div>`).join('');
+                const rows=recon.rows||[];
+                document.getElementById('ccReconciliation').innerHTML=rows.length?rows.map(row=>`<tr><td>${row.paid_at?new Date(row.paid_at).toLocaleString():'—'}</td><td>${escHtml(row.reseller||'—')}</td><td>/${escHtml(row.slug||'—')}</td><td>$${Number(row.total_usd||0).toFixed(2)}</td><td>${escHtml(row.operation_key||'No settlement job')}</td><td>${escHtml(row.settlement_status)}</td><td><span class="badge badge-${row.health==='ok'?'active':'suspended'}">${escHtml(row.health)}</span></td></tr>`).join(''):'<tr><td colspan="7" class="owner-empty">No paid transactions found.</td></tr>';
+            } catch(err) {
+                document.getElementById('ccSystemHealth').innerHTML=`<div><strong style="color:#ff5570">UNAVAILABLE</strong><span>${escHtml(err.message)}</span></div>`;
+            }
+        }
+
+        function switchOwnerView(event,id) { document.querySelectorAll('.owner-section-tab').forEach(x=>x.classList.remove('active')); document.querySelectorAll('.owner-view').forEach(x=>x.classList.remove('active')); event.currentTarget.classList.add('active'); document.getElementById(id).classList.add('active'); }
+
+        async function savePlatformControls() {
+            if(!confirm('Apply these platform controls to new payment activity?')) return;
+            try { await ownerApi('/api/owner/platform-settings',{method:'PUT',body:JSON.stringify({maintenance_mode:document.getElementById('ccMaintenance').checked,payments_paused:document.getElementById('ccPaymentsPaused').checked,provider_paused:document.getElementById('ccProviderPaused').value,default_charge_mode:document.getElementById('ccDefaultFeeMode').value,default_charge_value:document.getElementById('ccDefaultFeeValue').value,max_payment_usd:document.getElementById('ccMaxPayment').value,daily_volume_limit_usd:document.getElementById('ccDailyLimit').value,wallet_fee_enabled:document.getElementById('ccWalletFeeEnabled').checked,wallet_fee_threshold_usd:document.getElementById('ccWalletFeeThreshold').value,wallet_fee_amount_usd:document.getElementById('ccWalletFeeAmount').value,wallet_fee_lightning_address:document.getElementById('ccWalletFeeAddress').value,vps_expiry_date:document.getElementById('ccVpsExpiry').value,hosting_expiry_date:document.getElementById('ccHostingExpiry').value,domain_expiry_date:document.getElementById('ccDomainExpiry').value,support_message:document.getElementById('ccSupportMessage').value})}); alert('✅ Platform controls saved and audited.'); loadCommandCenter(); } catch(err){alert('Save error: '+err.message);}
+        }
+
+        async function openControlModal(id) {
+            try { const r=await ownerApi(`/api/owner/resellers/${id}`); document.getElementById('controlResellerId').value=r.id; document.getElementById('controlTitle').textContent=`${r.username} (#${r.id})`; document.getElementById('ctlPaymentsPaused').checked=!!Number(r.payments_paused); document.getElementById('ctlRequire2fa').checked=!!Number(r.require_2fa); document.getElementById('ctlMaxPayment').value=r.max_payment_usd||0; document.getElementById('ctlDailyLimit').value=r.max_daily_volume_usd||0; document.getElementById('ctlMaxUsers').value=r.max_sub_users||0; document.getElementById('ctlMaxLinks').value=r.max_links||0; document.getElementById('ctlFeeMode').value=r.charge_mode||'none'; document.getElementById('ctlFeeValue').value=r.charge_value||0; document.getElementById('ctlTags').value=r.tags||''; document.getElementById('ctlNotes').value=r.internal_notes||''; document.getElementById('controlModal').style.display='flex'; } catch(err){alert(err.message);}
+        }
+        function closeControlModal(){document.getElementById('controlModal').style.display='none';}
+        async function saveResellerControls(){const id=document.getElementById('controlResellerId').value;try{await ownerApi(`/api/owner/resellers/${id}/controls`,{method:'PUT',body:JSON.stringify({payments_paused:document.getElementById('ctlPaymentsPaused').checked,require_2fa:document.getElementById('ctlRequire2fa').checked,max_payment_usd:document.getElementById('ctlMaxPayment').value,max_daily_volume_usd:document.getElementById('ctlDailyLimit').value,max_sub_users:document.getElementById('ctlMaxUsers').value,max_links:document.getElementById('ctlMaxLinks').value,charge_mode:document.getElementById('ctlFeeMode').value,charge_value:document.getElementById('ctlFeeValue').value,tags:document.getElementById('ctlTags').value,internal_notes:document.getElementById('ctlNotes').value})});alert('✅ Reseller controls saved.');closeControlModal();loadCommandCenter();loadResellers();}catch(err){alert(err.message);}}
+        async function revokeResellerSessions(){const id=document.getElementById('controlResellerId').value;if(!confirm('Revoke every session and trusted browser for this reseller?'))return;try{const d=await ownerApi(`/api/owner/resellers/${id}/revoke-sessions`,{method:'POST',body:'{}'});alert('🛡️ '+d.message);loadCommandCenter();}catch(err){alert(err.message);}}
+        async function runDiagnostic(optionalId){const id=optionalId||document.getElementById('controlResellerId').value;if(!id)return;try{lastDiagnostic=await ownerApi(`/api/owner/resellers/${id}/diagnostic`);const d=lastDiagnostic;const items={Account:`${d.username} (${d.status})`,Provider:d.wallet_type||'Not configured','Provider ready':d.provider_configured?'✅ Yes':'❌ No','Payments paused':d.payments_paused?'⏸️ Yes':'No','2FA enabled':d.totp_enabled?'✅ Yes':'⚠️ No','2FA required':d.require_2fa?'Yes':'No','Payment links':`${d.counts.links}${d.max_links?` / ${d.max_links}`:' / unlimited'}`,Merchants:`${d.counts.merchants}${d.max_sub_users?` / ${d.max_sub_users}`:' / unlimited'}`,'Active sessions':d.counts.sessions,'Failed (24h)':d.counts.failed_24h,'Telegram alerts':d.telegram_configured?'Configured':'Not configured',Tags:d.tags||'None'};document.getElementById('diagnosticBody').innerHTML=Object.entries(items).map(([k,v])=>`<div class="owner-diagnostic-item"><span>${escHtml(k)}</span><strong>${escHtml(v)}</strong></div>`).join('');document.getElementById('diagnosticModal').style.display='flex';}catch(err){alert(err.message);}}
+        function copyDiagnostic(){if(!lastDiagnostic)return;navigator.clipboard.writeText(JSON.stringify(lastDiagnostic,null,2));alert('📋 Diagnostic report copied.');}
+        function exportOwnerPayments(){const rows=ownerCommandData.payments||[];const csv=['Time,Reseller,Link,Provider,Amount,Status',...rows.map(p=>[p.created_at,p.reseller,p.slug,p.provider,p.total_usd,p.status].map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(','))].join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='platform-payments.csv';a.click();URL.revokeObjectURL(a.href);}
+
         async function loadOwnerStats() {
             try {
                 const res = await fetch('/api/owner/stats');
@@ -331,6 +550,9 @@
                             <button class="btn btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.8rem;" onclick="toggleStatus(${r.id}, '${r.status === 'active' ? 'suspended' : 'active'}')">
                                 ${r.status === 'active' ? 'Suspend' : 'Activate'}
                             </button>
+                            <button class="btn btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.8rem;" onclick="openControlModal(${r.id})">🎛️ Controls</button>
+                            <button class="btn btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.8rem;" onclick="runDiagnostic(${r.id})">🩺 Diagnose</button>
+                            <button class="btn btn-danger" style="padding: 0.35rem 0.6rem; font-size: 0.8rem;" onclick="deleteReseller(${r.id}, '${encodeURIComponent(r.username)}')">🗑 Delete</button>
                         </td>
                     </tr>
                 `;}).join('');
@@ -360,9 +582,12 @@
                         <td>${su.rate_per_dollar || 1.0}x</td>
                         <td style="color:var(--text-muted); font-size:0.8rem;">${new Date(su.created_at).toLocaleDateString()}</td>
                         <td>
-                            <button class="btn btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.8rem;" onclick="resetSubUserPassword(${su.id}, '${escHtml(su.name)}')">
-                                <i class="fa-solid fa-key"></i> Reset Password
-                            </button>
+                            <div style="display:flex;gap:.4rem;flex-wrap:wrap">
+                                <button class="btn btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.8rem;" onclick="resetSubUserPassword(${su.id}, '${escHtml(su.name)}')"><i class="fa-solid fa-key"></i> Reset</button>
+                                ${su.status==='active'?`<button class="btn btn-secondary" style="padding:0.35rem 0.6rem;font-size:0.8rem" onclick="startSubUserPreview(${su.id})"><i class="fa-solid fa-eye"></i> View</button>`:''}
+                                <button class="btn btn-secondary" style="padding: 0.35rem 0.6rem; font-size: 0.8rem;" onclick="toggleSubUserStatus(${su.id}, '${su.status==='suspended'?'active':'suspended'}')">${su.status==='suspended'?'Restore':'Archive'}</button>
+                                <button class="btn btn-danger" style="padding: 0.35rem 0.6rem; font-size: 0.8rem;" onclick="deleteSubUser(${su.id}, '${encodeURIComponent(su.name)}')">🗑 Delete</button>
+                            </div>
                         </td>
                     </tr>
                 `).join('');
@@ -577,12 +802,83 @@ Password: ${password}`);
             } catch (err) { alert('Error: ' + err.message); }
         }
 
+        async function toggleSubUserStatus(id,status) {
+            const verb=status==='suspended'?'archive and remove access from':'restore access for';
+            if(!confirm(`Are you sure you want to ${verb} sub-user #${id}? Payment history will be preserved.`)) return;
+            try { await ownerApi(`/api/owner/sub-users/${id}/status`,{method:'PUT',body:JSON.stringify({status})}); loadSubUsers(); loadCommandCenter(); } catch(err){alert('Error: '+err.message);}
+        }
+
+        async function deleteReseller(id,encodedName) {
+            const name=decodeURIComponent(encodedName);
+            const required=`DELETE ${name}`;
+            const typed=prompt(`⚠️ PERMANENT DELETE\n\nThis will delete reseller "${name}", its merchants, links, payments, sessions and configuration. This cannot be undone.\n\nType exactly: ${required}`);
+            if(typed===null) return;
+            if(typed!==required){alert('Deletion cancelled: confirmation text did not match.');return;}
+            try { const data=await ownerApi(`/api/owner/resellers/${id}`,{method:'DELETE',body:JSON.stringify({confirmation:typed})}); alert('🗑️ '+data.message); loadOwnerStats(); loadCommandCenter(); loadResellers(); loadSubUsers(); } catch(err){alert('Delete error: '+err.message);}
+        }
+
+        async function deleteSubUser(id,encodedName) {
+            const name=decodeURIComponent(encodedName);
+            const required=`DELETE ${name}`;
+            const typed=prompt(`⚠️ PERMANENT DELETE\n\nThis removes sub-user "${name}". Assigned links and payment history will remain with the reseller but the panel login is deleted.\n\nType exactly: ${required}`);
+            if(typed===null) return;
+            if(typed!==required){alert('Deletion cancelled: confirmation text did not match.');return;}
+            try { const data=await ownerApi(`/api/owner/sub-users/${id}`,{method:'DELETE',body:JSON.stringify({confirmation:typed})}); alert('🗑️ '+data.message); loadOwnerStats(); loadCommandCenter(); loadSubUsers(); loadResellers(); } catch(err){alert('Delete error: '+err.message);}
+        }
+
+        async function openSubUserViewModal() {
+            try {
+                const list = await ownerApi('/api/owner/sub-users');
+                const active = list.filter(user => user.status === 'active');
+                if (!active.length) return alert('Create or restore an active sub-user first.');
+                document.getElementById('previewSubUserSelect').innerHTML = active.map(user => `<option value="${Number(user.id)}">${escHtml(user.name)} — ${escHtml(user.reseller_username)}</option>`).join('');
+                document.getElementById('subUserViewModal').style.display = 'flex';
+            } catch (err) { alert('Unable to load sub-users: ' + err.message); }
+        }
+
+        function closeSubUserViewModal() { document.getElementById('subUserViewModal').style.display = 'none'; }
+
+        async function startSubUserPreview(optionalId) {
+            const id = Number(optionalId || document.getElementById('previewSubUserSelect').value);
+            if (!Number.isSafeInteger(id) || id <= 0) return alert('Choose a valid sub-user.');
+            try {
+                const result = await ownerApi(`/api/owner/sub-users/${id}/preview`, { method: 'POST' });
+                window.location.href = result.redirect || '/subuser';
+            } catch (err) { alert('Unable to open sub-user view: ' + err.message); }
+        }
+
+        async function openOwnerSecurity() {
+            document.getElementById('ownerSecurityModal').style.display='flex';
+            await refreshOwnerSecurity();
+        }
+        function closeOwnerSecurity(){document.getElementById('ownerSecurityModal').style.display='none';}
+        async function refreshOwnerSecurity(){
+            try{
+                const d=await ownerApi('/api/security/status');
+                document.getElementById('owner2faState').textContent=d.totp_enabled?'Enabled':'Not enabled';
+                document.getElementById('owner2faState').style.color=d.totp_enabled?'var(--accent)':'var(--danger)';
+                document.getElementById('ownerSessionCount').textContent=d.devices.length;
+                document.getElementById('ownerTrustedCount').textContent=d.trusted_browsers.length;
+                document.getElementById('owner2faSetupBtn').style.display=d.totp_enabled?'none':'inline-flex';
+                document.getElementById('owner2faDisableBlock').style.display=d.totp_enabled?'block':'none';
+                const sessions=document.getElementById('ownerSessions');
+                sessions.innerHTML=d.devices.length?d.devices.map(s=>`<div class="owner-alert"><span>${s.device_type==='Mobile'?'📱':'💻'}</span><div><strong>${escHtml(s.device_type||'Browser')} ${Number(s.id)===Number(d.current_session_id)?'(Current)':''}</strong><small>${escHtml(s.ip||'—')} · Last active ${escHtml(new Date(s.last_active).toLocaleString())}</small></div>${Number(s.id)===Number(d.current_session_id)?'':`<button class="btn btn-danger" onclick="revokeOwnerSession(${Number(s.id)})">Log out</button>`}</div>`).join(''):'<div class="owner-empty">No active sessions.</div>';
+            }catch(err){alert('Security status error: '+err.message);}
+        }
+        async function beginOwner2fa(){try{const d=await ownerApi('/api/security/totp/setup',{method:'POST',body:'{}'});document.getElementById('owner2faQr').src=d.qr;document.getElementById('owner2faSecret').textContent=d.secret;document.getElementById('owner2faSetup').style.display='block';document.getElementById('owner2faEnableBtn').style.display='inline-flex';document.getElementById('owner2faSetupBtn').style.display='none';}catch(err){alert(err.message);}}
+        async function enableOwner2fa(){try{await ownerApi('/api/security/totp/enable',{method:'POST',body:JSON.stringify({code:document.getElementById('owner2faCode').value.trim()})});alert('✅ Owner 2FA is enabled.');document.getElementById('owner2faSetup').style.display='none';document.getElementById('owner2faEnableBtn').style.display='none';await refreshOwnerSecurity();}catch(err){alert(err.message);}}
+        async function disableOwner2fa(){if(!confirm('Disable 2FA on the owner account?'))return;try{await ownerApi('/api/security/totp/disable',{method:'POST',body:JSON.stringify({code:document.getElementById('owner2faCode').value.trim(),current_password:document.getElementById('owner2faPassword').value})});alert('2FA disabled.');document.getElementById('owner2faPassword').value='';await refreshOwnerSecurity();}catch(err){alert(err.message);}}
+        async function changeOwnerPassword(){const current=document.getElementById('ownerCurrentPassword').value;const next=document.getElementById('ownerNewPassword').value;const confirmPassword=document.getElementById('ownerConfirmPassword').value;if(next.length<12)return alert('Use at least 12 characters for the owner password.');try{await ownerApi('/api/security/password',{method:'POST',body:JSON.stringify({current_password:current,new_password:next,confirm_password:confirmPassword})});alert('✅ Owner password updated. Other sessions were logged out.');['ownerCurrentPassword','ownerNewPassword','ownerConfirmPassword'].forEach(id=>document.getElementById(id).value='');await refreshOwnerSecurity();}catch(err){alert(err.message);}}
+        async function revokeOwnerSession(id){try{await ownerApi(`/api/security/sessions/${id}`,{method:'DELETE'});await refreshOwnerSecurity();}catch(err){alert(err.message);}}
+        async function revokeOtherOwnerSessions(){if(!confirm('Log out every other owner session?'))return;try{await ownerApi('/api/security/sessions',{method:'DELETE'});await refreshOwnerSecurity();}catch(err){alert(err.message);}}
+
         async function logout() {
             await fetch('/api/auth/logout', { method: 'POST' });
             window.location.href = '/login';
         }
 
         loadOwnerStats();
+        loadCommandCenter();
         loadResellers();
         loadSubUsers();
     </script>

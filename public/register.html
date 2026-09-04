@@ -16,6 +16,7 @@
     .btn-auth { width: 100%; padding: 12px; font-size: 15px; }
     .auth-footer { text-align: center; margin-top: 20px; font-size: 13px; color: var(--text-muted); }
   </style>
+  <link rel="stylesheet" href="/css/design-v2.css?v=6">
 </head>
 <body>
 <div class="auth-card">
@@ -37,7 +38,7 @@
   </div>
   <div class="form-group">
     <label class="form-label">Password</label>
-    <input class="form-control" type="password" id="password" placeholder="Minimum 6 characters">
+    <input class="form-control" type="password" id="password" placeholder="Minimum 8 characters" minlength="8" autocomplete="new-password">
   </div>
 
   <button class="btn btn-primary btn-auth" id="regBtn" onclick="register()">Create Reseller Account</button>

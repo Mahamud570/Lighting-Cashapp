@@ -2,7 +2,7 @@
  * Integration Tests: routes/security.js
  * Covers: security status, TOTP disable, password change, and trusted-browser invalidation.
  */
-jest.mock('../../database/db');
+jest.mock('../../database/db', () => ({ query: jest.fn() }));
 jest.mock('../../middleware/auth');
 jest.mock('bcryptjs');
 jest.mock('speakeasy');

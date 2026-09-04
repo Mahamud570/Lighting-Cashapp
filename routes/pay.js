@@ -2,7 +2,9 @@ const express = require('express');
 const router = express.Router();
 const db = require('../database/db');
 const axios = require('axios');
+const crypto = require('crypto');
 const qrcode = require('qrcode');
+const { logSafeError } = require('../utils/safeError');
 const LNbitsService  = require('../services/lnbitsService');
 const BlinkService   = require('../services/blinkService');
 const AlbyService    = require('../services/albyService');
@@ -13,6 +15,57 @@ const GeoIpService   = require('../services/geoIpService');
 const fs = require('fs');
 const path = require('path');
 
+const isDemoSlug = slug => slug === 'test' || slug === 'demo';
+const demoAllowed = () => process.env.NODE_ENV !== 'production' || process.env.ALLOW_DEMO_PAYMENTS === '1';
+const escapeAttr = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+
+function publicInvoiceFailure(err) {
+    const status = Number(err?.response?.status || err?.statusCode || 0);
+    const providerText = String(
+        err?.response?.data?.detail ||
+        err?.response?.data?.message ||
+        err?.response?.data?.msg ||
+        err?.message || ''
+    );
+
+    if (/channel\s+(?:has\s+been\s+)?shut\s*down|channel\s+closed|no\s+active\s+channel/i.test(providerText)) {
+        return {
+            status: 503,
+            message: 'This merchant\'s payment wallet is temporarily unavailable. Please contact the merchant.'
+        };
+    }
+
+    if (status === 401 || status === 403 || /unauthori[sz]ed|invalid\s+(?:api\s*)?key|forbidden/i.test(providerText)) {
+        return {
+            status: 503,
+            message: 'This merchant\'s payment wallet needs attention. Please contact the merchant.'
+        };
+    }
+
+    return {
+        status: 500,
+        message: 'Failed to generate invoice. Please try again or contact the merchant.'
+    };
+}
+
+const createCashStyleQr = value => qrcode.toDataURL(value, {
+    errorCorrectionLevel: 'H',
+    color: {
+        dark: '#ffffff',
+        light: '#000000'
+    },
+    margin: 4,
+    width: 640
+});
+
+function publicBaseUrl(req) {
+    const configured = String(process.env.PUBLIC_BASE_URL || '').trim().replace(/\/$/, '');
+    if (/^https:\/\/[A-Za-z0-9.-]+(?::\d+)?$/i.test(configured) || (process.env.NODE_ENV !== 'production' && /^http:\/\/[A-Za-z0-9.-]+(?::\d+)?$/i.test(configured))) return configured;
+    const host = String(req.get('host') || '').trim().replace(/^www\./i, '');
+    const safeHost = /^[A-Za-z0-9.-]+(?::\d+)?$/.test(host) ? host : 'localhost';
+    return `${req.secure ? 'https' : 'http'}://${safeHost}`;
+}
+
 // SVG Social Preview Card (1200x630) for Telegram, WhatsApp, Twitter, iMessage
 router.get('/pay/:slug/preview.svg', async (req, res) => {
     try {
@@ -21,52 +74,25 @@ router.get('/pay/:slug/preview.svg', async (req, res) => {
             [req.params.slug]
         );
         const link = links[0] || { title: req.params.slug, brand_name: 'Cash App', slug: req.params.slug };
-        const title = (link.brand_name || link.title || 'Cash App').replace(/[<>&"]/g, '');
+        const title = String(link.title || link.slug || 'Cash App').replace(/[<>&"']/g, '').trim().slice(0, 28) || 'Cash App';
+        const initial = title.charAt(0).toUpperCase();
 
         const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <!-- Background Gradient -->
-    <radialGradient id="bgGlow" cx="30%" cy="50%" r="60%">
-      <stop offset="0%" stop-color="#14231b" stop-opacity="0.8"/>
-      <stop offset="100%" stop-color="#0b0e14" stop-opacity="1"/>
-    </radialGradient>
-
-    <!-- Cash App Neon Glow Filter -->
-    <filter id="cashGlow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="35" result="blur1"/>
-      <feGaussianBlur stdDeviation="15" result="blur2"/>
-      <feMerge>
-        <feMergeNode in="blur1"/>
-        <feMergeNode in="blur2"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-  </defs>
-
-  <!-- Deep Dark Slate Background -->
-  <rect width="1200" height="630" fill="url(#bgGlow)"/>
-
-  <!-- Glowing Cash App Aura -->
-  <rect x="150" y="165" width="300" height="300" rx="70" fill="#00D632" opacity="0.35" filter="url(#cashGlow)"/>
-
-  <!-- Cash App Squircle Icon -->
-  <g transform="translate(170, 185)">
-    <rect width="260" height="260" rx="60" fill="#00D632"/>
-    <text x="130" y="185" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="165" font-weight="900" text-anchor="middle">$</text>
+  <rect width="1200" height="630" rx="22" fill="#00df3b"/>
+  <circle cx="155" cy="130" r="78" fill="#d5b77c"/>
+  <text x="155" y="158" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="82" font-weight="700" text-anchor="middle">${initial}</text>
+  <g transform="translate(1000,42)">
+    <rect width="145" height="145" rx="32" fill="#050a08"/>
+    <rect x="36" y="25" width="73" height="94" rx="20" fill="#00df3b"/>
+    <text x="72" y="96" fill="#050a08" font-family="Arial, Helvetica, sans-serif" font-size="70" font-weight="900" text-anchor="middle">$</text>
   </g>
-
-  <!-- Cash App Brand Typography -->
-  <text x="490" y="305" fill="#FFFFFF" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="115" font-weight="800" letter-spacing="-1">Cash App</text>
-  
-  <!-- Subtitle with Lightning Bolt -->
-  <text x="495" y="380" fill="#CBD5E1" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="44" font-weight="500">
-    Pay instantly, securely. <tspan fill="#00D632" font-size="46">⚡</tspan>
-  </text>
+  <text x="80" y="525" fill="#020805" font-family="Arial, Helvetica, sans-serif" font-size="92" font-weight="900">${title}</text>
+  <text x="82" y="590" fill="#020805" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="800">${title}</text>
 </svg>`;
 
         res.setHeader('Content-Type', 'image/svg+xml');
-        res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=86400');
         res.send(svg);
     } catch (e) {
         res.status(500).send('Error generating card');
@@ -77,7 +103,8 @@ router.get('/pay/:slug/preview.svg', async (req, res) => {
 router.get('/pay/:slug', async (req, res) => {
     try {
         let link;
-        if (req.params.slug === 'test' || req.params.slug === 'demo') {
+        if (isDemoSlug(req.params.slug)) {
+            if (!demoAllowed()) return res.status(404).sendFile('404.html', { root: path.join(__dirname, '../public') });
             link = {
                 id: 0,
                 slug: req.params.slug,
@@ -88,7 +115,7 @@ router.get('/pay/:slug', async (req, res) => {
             };
         } else {
             const [links] = await db.query(
-                "SELECT pl.*, r.charge_mode, r.charge_value, r.wallet_type FROM payment_links pl LEFT JOIN resellers r ON pl.reseller_id = r.id WHERE pl.slug = ? AND pl.status = 'active'",
+                "SELECT pl.*, r.charge_mode AS reseller_charge_mode, r.charge_value AS reseller_charge_value, r.wallet_type FROM payment_links pl LEFT JOIN resellers r ON pl.reseller_id = r.id WHERE pl.slug = ? AND pl.status = 'active'",
                 [req.params.slug]
             );
 
@@ -112,31 +139,46 @@ router.get('/pay/:slug', async (req, res) => {
         const payHtmlPath = path.join(__dirname, '../public/pay.html');
         let html = fs.readFileSync(payHtmlPath, 'utf8');
 
-        const protocol = req.headers['x-forwarded-proto'] || (req.secure ? 'https' : 'http');
-        const host = req.headers['host'] || 'portal-cash-app.com';
-        const pageUrl = `${protocol}://${host}/pay/${link.slug}`;
-        const previewImg = `${protocol}://${host}/img/cashapp-banner.png`;
-        const ogTitle = `Pay with CashApp`;
+        const baseUrl = publicBaseUrl(req);
+        const pageUrl = `${baseUrl}/pay/${encodeURIComponent(link.slug)}`;
+        const fullPreviewImg = `${baseUrl}/img/cashapp-social-card.png`;
+        const personalizedPreviewImg = `${baseUrl}/pay/${encodeURIComponent(link.slug)}/preview.svg?v=2`;
+        const userAgent = String(req.headers['user-agent'] || '');
+        const fullPreviewCrawler = /TelegramBot|WhatsApp|facebookexternalhit|Facebot|Twitterbot|Discordbot|Slackbot|LinkedInBot/i.test(userAgent);
+        const applePreviewClient = /AppleLinkPresentation|com\.apple\.WebKit\.Networking|CFNetwork|iMessage|Applebot|iPhone|iPad|Macintosh/i.test(userAgent);
+        const compactPreview = link.preview_mode === 'imessage_compact' && applePreviewClient && !fullPreviewCrawler;
+        const recipientName = escapeAttr(link.title || link.slug || 'Cash App');
+        const ogTitle = compactPreview ? `Pay ${recipientName}` : 'Pay with Cash App';
         const ogDesc = 'Pay instantly, securely. ⚡';
-        const brandName = link.brand_name || 'Cash App';
+        const brandName = escapeAttr(link.brand_name || 'Cash App');
+        const compactTextTags = compactPreview ? '' : `
+  <meta name="description" content="${ogDesc}">
+  <meta property="og:site_name" content="${brandName}">
+  <meta property="og:description" content="${ogDesc}">
+  <meta name="twitter:description" content="${ogDesc}">`;
+        const previewImg = compactPreview ? personalizedPreviewImg : fullPreviewImg;
+        const previewImageType = compactPreview ? 'image/svg+xml' : 'image/png';
+        const imageTags = `
+  <meta property="og:image" content="${escapeAttr(previewImg)}">
+  <meta property="og:image:url" content="${escapeAttr(previewImg)}">
+  <meta property="og:image:secure_url" content="${escapeAttr(previewImg)}">
+  <meta property="og:image:type" content="${previewImageType}">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Cash App — Pay instantly, securely">
+  <meta name="twitter:image" content="${escapeAttr(previewImg)}">
+  <meta name="twitter:image:alt" content="${compactPreview ? `Pay ${recipientName}` : 'Cash App — Pay instantly, securely'}">`;
 
         const metaTags = `
   <title>${ogTitle}</title>
-  <meta name="description" content="${ogDesc}">
+  <link rel="canonical" href="${escapeAttr(pageUrl)}">
   <meta property="og:type" content="website">
-  <meta property="og:site_name" content="${brandName}">
-  <meta property="og:url" content="${pageUrl}">
+  <meta property="og:url" content="${escapeAttr(pageUrl)}">
   <meta property="og:title" content="${ogTitle}">
-  <meta property="og:description" content="${ogDesc}">
-  <meta property="og:image" content="${previewImg}">
-  <meta property="og:image:secure_url" content="${previewImg}">
-  <meta property="og:image:type" content="image/png">
-  <meta property="og:image:width" content="1200">
-  <meta property="og:image:height" content="630">
-  <meta name="twitter:card" content="summary_large_image">
+  ${compactTextTags}
+  ${imageTags}
+  <meta name="twitter:card" content="${compactPreview ? 'summary' : 'summary_large_image'}">
   <meta name="twitter:title" content="${ogTitle}">
-  <meta name="twitter:description" content="${ogDesc}">
-  <meta name="twitter:image" content="${previewImg}">
   <meta name="theme-color" content="#00D632">
         `;
 
@@ -152,7 +194,8 @@ router.get('/pay/:slug', async (req, res) => {
 // GET /api/pay/:slug/info - get link info for payment page JS
 router.get('/api/pay/:slug/info', async (req, res) => {
     try {
-        if (req.params.slug === 'test' || req.params.slug === 'demo') {
+        if (isDemoSlug(req.params.slug)) {
+            if (!demoAllowed()) return res.status(404).json({ error: 'Payment link not found' });
             const themeKey = req.query.theme || 'default';
             return res.json({
                 slug: req.params.slug,
@@ -171,7 +214,7 @@ router.get('/api/pay/:slug/info', async (req, res) => {
         }
 
         const [links] = await db.query(
-            `SELECT pl.*, r.charge_mode, r.charge_value, r.wallet_type, r.wallet_email
+            `SELECT pl.*, r.charge_mode AS reseller_charge_mode, r.charge_value AS reseller_charge_value, r.wallet_type, r.wallet_email
              FROM payment_links pl
              LEFT JOIN resellers r ON pl.reseller_id = r.id
              WHERE pl.slug = ? AND pl.status = 'active'`,
@@ -191,12 +234,13 @@ router.get('/api/pay/:slug/info', async (req, res) => {
             fixed_amount: link.fixed_amount,
             min_amount: link.min_amount,
             max_amount: link.max_amount,
-            charge_mode: link.charge_mode,
-            charge_value: link.charge_value,
+            charge_mode: link.charge_mode === 'inherit' ? link.reseller_charge_mode : link.charge_mode,
+            charge_value: link.charge_mode === 'inherit' ? link.reseller_charge_value : link.charge_value,
             wallet_configured: !!link.wallet_type
         });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('[pay] Link info error:', err && err.message ? err.message : err);
+        res.status(500).json({ error: 'Failed to load payment link' });
     }
 });
 
@@ -205,12 +249,14 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
     try {
         const { amount, note } = req.body;
 
-        if (req.params.slug === 'test' || req.params.slug === 'demo') {
+        if (isDemoSlug(req.params.slug)) {
+            if (!demoAllowed()) return res.status(404).json({ error: 'Payment link not found' });
             const amountUsd = parseFloat(amount || 1);
+            if (!Number.isFinite(amountUsd) || amountUsd <= 0 || amountUsd > 2000) return res.status(400).json({ error: 'Amount must be between $0.01 and $2,000' });
             const btcPrice = await PayoutService.getBtcPrice().catch(() => 65000);
             const totalSats = Math.round((amountUsd / btcPrice) * 100000000);
             const mockBolt11 = `lnbc${totalSats}u1pdemo${Date.now()}mockinvoicetest`;
-            const qrCode = await qrcode.toDataURL(`lightning:${mockBolt11}`);
+            const qrCode = await createCashStyleQr(`lightning:${mockBolt11}`);
             return res.json({
                 success: true,
                 payment_id: 0,
@@ -231,7 +277,8 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
              r.lnbits_url, r.lnbits_invoice_key, r.lnbits_admin_key,
              r.blink_api_key, r.blink_api_keys, r.blink_wallet_id,
              r.alby_access_token, r.alby_nwc_string,
-             r.charge_mode, r.charge_value, r.id as reseller_id
+             r.charge_mode AS reseller_charge_mode, r.charge_value AS reseller_charge_value, r.id as reseller_id, r.status as reseller_status,
+             r.payments_paused, r.max_payment_usd, r.max_daily_volume_usd
              FROM payment_links pl
              LEFT JOIN resellers r ON pl.reseller_id = r.id
              WHERE pl.slug = ? AND pl.status = 'active'`,
@@ -240,10 +287,26 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
 
         if (!links.length) return res.status(404).json({ error: 'Link not found' });
         const link = links[0];
+        const effectiveChargeMode = link.charge_mode === 'inherit' ? link.reseller_charge_mode : link.charge_mode;
+        const effectiveChargeValue = link.charge_mode === 'inherit' ? link.reseller_charge_value : link.charge_value;
+
+        const [platformRows] = await db.query('SELECT key,value FROM platform_settings');
+        const platform = Object.fromEntries(platformRows.map(row => [row.key, row.value]));
+        if (platform.maintenance_mode === '1') return res.status(503).json({ error: 'Payments are temporarily unavailable during scheduled maintenance' });
+        if (platform.payments_paused === '1') return res.status(503).json({ error: 'New payments are temporarily paused' });
+        if (link.reseller_status !== 'active' || Number(link.payments_paused)) return res.status(503).json({ error: 'This merchant is not accepting new payments right now' });
+        if (platform.provider_paused && platform.provider_paused === link.wallet_type) return res.status(503).json({ error: 'This payment provider is temporarily paused' });
 
         let amountUsd = parseFloat(amount);
         if (isNaN(amountUsd) || !isFinite(amountUsd) || amountUsd <= 0) {
             return res.status(400).json({ error: 'Valid positive payment amount required' });
+        }
+        const effectiveMax = Math.min(...[Number(platform.max_payment_usd)||Infinity,Number(link.max_payment_usd)||Infinity].filter(Number.isFinite));
+        if (Number.isFinite(effectiveMax) && amountUsd > effectiveMax) return res.status(400).json({ error: `Maximum payment amount is $${effectiveMax.toFixed(2)}` });
+        const dailyLimit = Math.min(...[Number(platform.daily_volume_limit_usd)||Infinity,Number(link.max_daily_volume_usd)||Infinity].filter(Number.isFinite));
+        if (Number.isFinite(dailyLimit)) {
+            const [[daily]] = await db.query("SELECT COALESCE(SUM(total_usd),0) total FROM payments WHERE reseller_id=? AND status IN ('pending','paid') AND created_at>=date('now')",[link.reseller_id]);
+            if (Number(daily.total||0)+amountUsd > dailyLimit) return res.status(429).json({ error: 'Daily payment limit has been reached for this merchant' });
         }
 
         if (link.amount_type === 'fixed') {
@@ -268,13 +331,13 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
 
         // Calculate and validate charge
         let chargeUsd = 0;
-        if (link.charge_mode === 'fixed') {
-            const parsedVal = parseFloat(link.charge_value);
+        if (effectiveChargeMode === 'fixed') {
+            const parsedVal = parseFloat(effectiveChargeValue);
             if (!isNaN(parsedVal) && isFinite(parsedVal) && parsedVal > 0) {
                 chargeUsd = Math.min(parsedVal, 100); // capped at $100 max fee
             }
-        } else if (link.charge_mode === 'percent') {
-            const parsedVal = parseFloat(link.charge_value);
+        } else if (effectiveChargeMode === 'percent') {
+            const parsedVal = parseFloat(effectiveChargeValue);
             if (!isNaN(parsedVal) && isFinite(parsedVal) && parsedVal > 0) {
                 const percent = Math.min(parsedVal, 50); // capped at 50% max fee
                 chargeUsd = (amountUsd * percent) / 100;
@@ -291,7 +354,7 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
         let invoiceData = {};
 
         if (link.wallet_type === 'lnbits' && link.lnbits_invoice_key) {
-            const webhookUrl = `${req.protocol}://${req.get('host')}/api/webhooks/lnbits`;
+            const webhookUrl = `${publicBaseUrl(req)}/api/webhooks/lnbits`;
             const lnbitsRes = await LNbitsService.createInvoice({
                 url: link.lnbits_url,
                 invoiceKey: link.lnbits_invoice_key,
@@ -344,13 +407,15 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
                 if (!targetAddress) {
                     return res.status(400).json({ error: 'No Lightning address associated with this NWC connection. Please configure a Lightning Address in Wallet Settings.' });
                 }
-                const payreq = await PayoutService.resolveLightningAddress(targetAddress, totalSats);
+                const resolvedInvoice = await PayoutService.resolveLightningAddressInvoice(targetAddress, totalSats);
+                const payreq = resolvedInvoice.paymentRequest;
                 invoiceData = {
                     invoice_id: `nwc_${Date.now()}`,
                     lightning_invoice: payreq,
                     uri: `lightning:${payreq}`,
                     provider: 'alby',
-                    btc_amount: totalSats / 100000000
+                    btc_amount: totalSats / 100000000,
+                    verify_url: resolvedInvoice.verifyUrl
                 };
             }
         } else if (link.wallet_type === 'opennode') {
@@ -360,7 +425,7 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
                 currency: 'USD',
                 description: link.title || 'Lightning Payment',
                 order_id: `lp_${Date.now()}`
-            }, { headers: { Authorization: link.opennode_api_key } });
+            }, { headers: { Authorization: link.opennode_api_key }, timeout: 10000 });
 
             const chargeData = resp.data.data;
             invoiceData = {
@@ -378,7 +443,7 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
                     currency: 'USD',
                     metadata: { orderId: `lp_${Date.now()}`, itemDesc: link.title }
                 },
-                { headers: { Authorization: `token ${link.btcpay_api_key}` } }
+                { headers: { Authorization: `token ${link.btcpay_api_key}` }, timeout: 10000 }
             );
 
             invoiceData = {
@@ -394,13 +459,15 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
                 return res.status(400).json({ error: 'No Lightning receiving address configured for this link. Please configure your wallet settings.' });
             }
             try {
-                const payreq = await PayoutService.resolveLightningAddress(lightningAddress, totalSats);
+                const resolvedInvoice = await PayoutService.resolveLightningAddressInvoice(lightningAddress, totalSats);
+                const payreq = resolvedInvoice.paymentRequest;
                 invoiceData = {
                     invoice_id: `ln_${Date.now()}`,
                     lightning_invoice: payreq,
                     uri: `lightning:${payreq}`,
                     provider: 'email',
-                    btc_amount: totalSats / 100000000
+                    btc_amount: totalSats / 100000000,
+                    verify_url: resolvedInvoice.verifyUrl
                 };
             } catch(lnErr) {
                 console.error('LNURL resolution error, failing safely:', lnErr.message);
@@ -410,15 +477,17 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
 
         const clientIp = req.clientIp || req.ip || '127.0.0.1';
         const payerLocation = await GeoIpService.lookup(clientIp);
+        const statusToken = crypto.randomBytes(24).toString('hex');
 
         const [result] = await db.query(
             `INSERT INTO payments
-             (link_id, reseller_id, invoice_id, provider, amount_usd, charge_usd, total_usd,
-              btc_amount, lightning_invoice, verify_url, status, expires_at, payer_ip, payer_location, payer_note, receiving_wallet)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now', '+15 minutes'), ?, ?, ?, ?)`,
+             (link_id, reseller_id, invoice_id, public_status_token, provider, amount_usd, charge_usd, total_usd,
+              amount_sats, btc_amount, lightning_invoice, verify_url, status, expires_at, payer_ip, payer_location, payer_note, receiving_wallet)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now', '+15 minutes'), ?, ?, ?, ?)`,
             [
-                link.id, link.reseller_id, invoiceData.invoice_id, invoiceData.provider,
+                link.id, link.reseller_id, invoiceData.invoice_id, statusToken, invoiceData.provider,
                 amountUsd, chargeUsd, totalUsd,
+                totalSats,
                 invoiceData.btc_amount || null,
                 invoiceData.lightning_invoice || null,
                 invoiceData.verify_url || null,
@@ -432,18 +501,12 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
         let qrDataUrl = null;
         const qrTarget = invoiceData.uri || (invoiceData.lightning_invoice ? `lightning:${invoiceData.lightning_invoice}` : null);
         if (qrTarget) {
-            qrDataUrl = await qrcode.toDataURL(qrTarget, {
-                color: {
-                    dark: '#000000',
-                    light: '#ffffff'
-                },
-                margin: 1,
-                width: 320
-            });
+            qrDataUrl = await createCashStyleQr(qrTarget);
         }
 
         res.json({
             payment_id:      result.insertId,
+            status_token:    statusToken,
             invoice_id:      invoiceData.invoice_id,
             lightning_invoice: invoiceData.lightning_invoice,
             uri:             invoiceData.uri,
@@ -458,12 +521,9 @@ router.post('/api/pay/:slug/invoice', async (req, res) => {
             expires_in:      900 // 15 minutes
         });
     } catch (err) {
-        console.error('[pay] Invoice creation error:', err);
-        let errMsg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Failed to create invoice. Please try again.';
-        if (/api[_-]?key|secret|token|password|sk_live|bearer/i.test(errMsg)) {
-            errMsg = 'Failed to generate invoice. Please verify your payment wallet settings.';
-        }
-        res.status(500).json({ error: errMsg });
+        logSafeError('[pay] Invoice creation failed:', err);
+        const failure = publicInvoiceFailure(err);
+        res.status(failure.status).json({ error: failure.message });
     }
 });
 
@@ -476,8 +536,8 @@ router.get('/api/pay/invoice/:id/status', async (req, res) => {
              r.blink_api_key, r.blink_api_keys, r.blink_wallet_id
              FROM payments p 
              LEFT JOIN resellers r ON p.reseller_id = r.id 
-             WHERE p.id = ? OR p.invoice_id = ?`,
-            [req.params.id, req.params.id]
+             WHERE p.public_status_token = ?`,
+            [req.params.id]
         );
         if (!payments.length) return res.status(404).json({ error: 'Invoice not found' });
         const payment = payments[0];
@@ -513,7 +573,8 @@ router.get('/api/pay/invoice/:id/status', async (req, res) => {
 
         res.json({ status: payment.status, paid_at: payment.paid_at });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('[pay] Invoice status error:', err && err.message ? err.message : err);
+        res.status(500).json({ error: 'Failed to check invoice status' });
     }
 });
 

@@ -78,6 +78,9 @@ CREATE TABLE IF NOT EXISTS payment_links (
     fixed_amount REAL,
     min_amount REAL DEFAULT 1,
     max_amount REAL DEFAULT 2000,
+    charge_mode TEXT DEFAULT 'inherit' CHECK(charge_mode IN ('inherit','none','fixed','percent')),
+    charge_value REAL DEFAULT 0,
+    preview_mode TEXT DEFAULT 'full' CHECK(preview_mode IN ('full','imessage_compact')),
     status TEXT DEFAULT 'active' CHECK(status IN ('active','inactive')),
     is_scan_code INTEGER DEFAULT 0,
     clicks INTEGER DEFAULT 0,
@@ -104,10 +107,12 @@ CREATE TABLE IF NOT EXISTS payments (
     reseller_id INTEGER NOT NULL,
     sub_user_id INTEGER,
     invoice_id TEXT UNIQUE,
+    public_status_token TEXT UNIQUE,
     provider TEXT DEFAULT 'email',
     amount_usd REAL NOT NULL,
     charge_usd REAL DEFAULT 0,
     total_usd REAL NOT NULL,
+    amount_sats INTEGER,
     btc_amount REAL,
     lightning_invoice TEXT,
     payment_request TEXT,
@@ -195,6 +200,66 @@ CREATE TABLE IF NOT EXISTS auto_sweeps (
     FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE SET NULL
 );
 
+CREATE TABLE IF NOT EXISTS settlement_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    payment_id INTEGER NOT NULL,
+    reseller_id INTEGER NOT NULL,
+    operation_key VARCHAR(64) NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','completed','retry','failed_permanent','held','unknown')),
+    amount_sats INTEGER NOT NULL DEFAULT 0,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_retry_at DATETIME,
+    external_reference TEXT,
+    last_error TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(payment_id, operation_key),
+    FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE CASCADE,
+    FOREIGN KEY (reseller_id) REFERENCES resellers(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS platform_wallet_fees (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_sweep_id INTEGER NOT NULL UNIQUE,
+    reseller_id INTEGER NOT NULL,
+    amount_sats INTEGER NOT NULL,
+    amount_usd REAL NOT NULL DEFAULT 0.75,
+    destination TEXT NOT NULL,
+    txid TEXT,
+    preimage TEXT,
+    network_fee_sats INTEGER DEFAULT 0,
+    status VARCHAR(32) NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','completed','retry','failed_permanent','unknown')),
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_retry_at DATETIME,
+    error_message TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (source_sweep_id) REFERENCES auto_sweeps(id) ON DELETE CASCADE,
+    FOREIGN KEY (reseller_id) REFERENCES resellers(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS wallet_sweep_locks (
+    reseller_id INTEGER PRIMARY KEY,
+    locked_until DATETIME NOT NULL,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (reseller_id) REFERENCES resellers(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS telegram_payment_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    payment_id INTEGER NOT NULL UNIQUE,
+    reseller_id INTEGER NOT NULL,
+    chat_id VARCHAR(64) NOT NULL,
+    message_id INTEGER NOT NULL,
+    status VARCHAR(32) NOT NULL DEFAULT 'received',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE CASCADE,
+    FOREIGN KEY (reseller_id) REFERENCES resellers(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS webhook_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     reseller_id INTEGER,
@@ -207,6 +272,23 @@ CREATE TABLE IF NOT EXISTS webhook_events (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS platform_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updated_by INTEGER,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+INSERT OR IGNORE INTO platform_settings (key, value) VALUES
+('wallet_fee_enabled', '0'),
+('wallet_fee_threshold_usd', '200'),
+('wallet_fee_amount_usd', '0.75'),
+('wallet_fee_lightning_address', ''),
+('lnbits_expiry_date', ''),
+('vps_expiry_date', '2026-09-20'),
+('hosting_expiry_date', '2026-09-16'),
+('domain_expiry_date', '2026-09-16');
+
 -- Default themes
 INSERT OR IGNORE INTO payment_themes (id, name, key_name, accent_color, bg_color, is_global) VALUES
 (1, 'Default', 'default', '#00d632', '#0d1117', 1),
@@ -217,8 +299,3 @@ INSERT OR IGNORE INTO payment_themes (id, name, key_name, accent_color, bg_color
 (6, 'Pay Isla', 'pay_isla', '#00d632', '#0f0f1a', 1),
 (7, 'Beauty Queen', 'beauty_queen', '#ff6eb4', '#1a0a1a', 1),
 (8, 'Beauty Queen V2', 'beauty_queen_v2', '#e040fb', '#12001a', 1);
-
--- Default admin account (password: admin123, role: owner)
-INSERT OR IGNORE INTO resellers (id, username, email, password, role, status) VALUES
-(1, 'admin', 'admin@lightningpay.local', '$2a$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'owner', 'active');
-

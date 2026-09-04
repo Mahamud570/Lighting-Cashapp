@@ -300,9 +300,10 @@
       line-height: 0;
       border-radius: 16px;
       overflow: hidden;
-      background: #ffffff;
-      padding: 10px;
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      background: #000000;
+      padding: 8px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65), 0 0 28px rgba(0, 214, 50, 0.08);
     }
     .qr-frame img {
       width: 100%;
@@ -320,7 +321,7 @@
       width: 44px;
       height: 44px;
       background: var(--cash-green);
-      border: 4px solid #ffffff;
+      border: 4px solid #000000;
       border-radius: 13px;
       display: flex;
       align-items: center;
@@ -381,60 +382,10 @@
       align-items: baseline;
       gap: 6px;
     }
-    .due-sats-badge {
-      font-size: 11.5px;
-      font-weight: 700;
-      color: var(--cash-green);
-      background: rgba(0, 214, 50, 0.1);
-      padding: 2px 8px;
-      border-radius: 10px;
-    }
-
     /* Monospace Copy Box for Lightning Address */
-    .ln-copy-container {
-      background: rgba(255, 255, 255, 0.03);
-      border: 1px dashed rgba(255, 255, 255, 0.12);
-      border-radius: 16px;
-      padding: 11px 14px;
-      margin-bottom: 14px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      transition: all 0.15s ease;
-    }
-    .ln-copy-container:hover {
-      background: rgba(0, 214, 50, 0.06);
-      border-color: var(--cash-green);
-    }
-    .ln-copy-header {
-      font-size: 10.5px;
-      font-weight: 700;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.6px;
-      margin-bottom: 3px;
-    }
-    .ln-copy-hash {
-      font-family: 'SF Mono', Consolas, Monaco, monospace;
-      font-size: 11.5px;
-      color: var(--cash-green);
-      font-weight: 600;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      max-width: 255px;
-    }
-    .ln-copy-btn-icon {
-      font-size: 14px;
-      color: var(--text-muted);
-      flex-shrink: 0;
-    }
-
     .action-button-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr;
       gap: 10px;
       margin-bottom: 12px;
     }
@@ -560,6 +511,7 @@
       gap: 6px;
     }
   </style>
+  <link rel="stylesheet" href="/css/design-v2.css?v=6">
 </head>
 <body>
 
@@ -638,22 +590,14 @@
       Only send Bitcoin (BTC) to this address
     </div>
 
+    <div class="qr-notice-text" id="launchStatus" role="status" aria-live="polite"></div>
+
     <!-- Amount Due Summary -->
     <div class="due-summary-row">
       <span class="due-label">Amount Due</span>
       <div class="due-val">
         <span id="invTotalTag">$0.00</span>
-        <span class="due-sats-badge" id="invSatsTag">— sats</span>
       </div>
-    </div>
-
-    <!-- Visible Monospace Lightning Address Box -->
-    <div class="ln-copy-container" onclick="copyInvoiceData()" title="Tap to copy Lightning invoice">
-      <div style="min-width:0;flex:1;">
-        <div class="ln-copy-header">Lightning Invoice (Tap to Copy)</div>
-        <div class="ln-copy-hash" id="invoiceTextDisplay">lnbc...</div>
-      </div>
-      <span class="ln-copy-btn-icon" id="copyIcon">📋</span>
     </div>
 
     <!-- Secondary Buttons -->
@@ -704,6 +648,7 @@ let linkData = null;
 let invoicePayload = null;
 let pollRef = null;
 let timerRef = null;
+let cashAppLaunchTimer = null;
 
 async function init() {
   try {
@@ -820,6 +765,8 @@ async function startPaymentFlow() {
 
     invoicePayload = data;
     renderQRScreen(data);
+    clearTimeout(cashAppLaunchTimer);
+    cashAppLaunchTimer = setTimeout(() => triggerCashApp(), 350);
   } catch (err) {
     showErr(err.message || 'Payment server error');
     submitBtn.disabled = false;
@@ -833,16 +780,6 @@ function renderQRScreen(inv) {
 
   const totalTag = document.getElementById('invTotalTag');
   if (totalTag) totalTag.textContent = `$${parseFloat(inv.total_usd).toFixed(2)}`;
-
-  const satsTag = document.getElementById('invSatsTag');
-  if (satsTag && inv.sats) {
-    satsTag.textContent = `${Number(inv.sats).toLocaleString()} sats`;
-  }
-
-  const invoiceText = document.getElementById('invoiceTextDisplay');
-  if (invoiceText) {
-    invoiceText.textContent = inv.lightning_invoice || inv.uri || '—';
-  }
 
   const qrImg = document.getElementById('qrImg');
   if (qrImg && inv.qr_code) {
@@ -869,7 +806,7 @@ function renderQRScreen(inv) {
   clearInterval(pollRef);
   pollRef = setInterval(async () => {
     try {
-      const res = await fetch(`/api/pay/invoice/${inv.payment_id}/status`);
+      const res = await fetch(`/api/pay/invoice/${encodeURIComponent(inv.status_token)}/status`);
       const data = await res.json();
       if (data.status === 'paid') {
         clearInterval(pollRef);
@@ -878,20 +815,30 @@ function renderQRScreen(inv) {
       }
     } catch(e) {}
   }, 2500);
+
 }
 
 // ─── CASH APP LAUNCH & DEEP LINKS ────────────────────────────────
+function getLightningPaymentRequest() {
+  if (!invoicePayload) return null;
+  const direct = String(invoicePayload.lightning_invoice || '').trim();
+  const fromUri = String(invoicePayload.uri || '').replace(/^lightning:/i, '').trim();
+  const candidate = direct || fromUri;
+  return /^ln(?:bc|tb|bcrt)[0-9a-z]+$/i.test(candidate) ? candidate : null;
+}
+
 function triggerCashApp() {
   if (!invoicePayload) return;
-  const uri = invoicePayload.uri;
-  const payreq = invoicePayload.lightning_invoice;
+  const payreq = getLightningPaymentRequest();
+  const launchStatus = document.getElementById('launchStatus');
 
-  if (uri) {
-    window.location.href = uri;
-  } else if (payreq) {
-    window.location.href = `lightning:${payreq}`;
+  if (payreq) {
+    if (launchStatus) launchStatus.textContent = 'Opening Cash App… Use Back to return to the QR if needed.';
+    window.location.href = `https://cash.app/launch/lightning/${encodeURIComponent(payreq)}`;
   } else if (invoicePayload.hosted_checkout) {
     window.location.href = invoicePayload.hosted_checkout;
+  } else if (invoicePayload.uri) {
+    window.location.href = invoicePayload.uri;
   }
 }
 
@@ -922,17 +869,15 @@ function copyInvoiceData() {
   if (text) {
     copyToClipboard(text);
     const btn = document.getElementById('copyInvoiceBtn');
-    const copyIcon = document.getElementById('copyIcon');
     if (btn) btn.textContent = '✅ Copied!';
-    if (copyIcon) copyIcon.textContent = '✅';
     setTimeout(() => { 
       if (btn) btn.textContent = '📋 Copy Invoice'; 
-      if (copyIcon) copyIcon.textContent = '📋';
     }, 2000);
   }
 }
 
 function backToKeypad() {
+  clearTimeout(cashAppLaunchTimer);
   clearInterval(timerRef);
   clearInterval(pollRef);
   document.getElementById('qrScreen').classList.remove('active');

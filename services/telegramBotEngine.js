@@ -3,6 +3,8 @@ const db = require('../database/db');
 const BlinkService = require('./blinkService');
 const BinanceService = require('./binanceService');
 const PayoutService = require('./payoutService');
+const { safeErrorDetails } = require('../utils/safeError');
+const escapeHtml = value => String(value ?? '').replace(/[&<>]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[char]));
 
 /**
  * Interactive Telegram Bot Engine
@@ -11,50 +13,98 @@ const PayoutService = require('./payoutService');
 class TelegramBotEngine {
     constructor() {
         this.running = false;
-        this.lastUpdateId = 0;
-        this.pollTimeout = null;
+        this.botStates = new Map();
+        this.refreshTimer = null;
     }
 
     start() {
         if (this.running) return;
         this.running = true;
-        this.pollUpdates();
+        this.refreshBots();
         console.log('🤖 Telegram Interactive Bot Engine started');
     }
 
     stop() {
         this.running = false;
-        if (this.pollTimeout) clearTimeout(this.pollTimeout);
+        if (this.refreshTimer) clearTimeout(this.refreshTimer);
+        for (const state of this.botStates.values()) {
+            if (state.timer) clearTimeout(state.timer);
+            state.controller?.abort();
+        }
+        this.botStates.clear();
     }
 
-    async pollUpdates() {
+    async refreshBots() {
         if (!this.running) return;
-
         try {
-            const [resellers] = await db.query('SELECT * FROM resellers WHERE telegram_bot_token IS NOT NULL LIMIT 1');
-            if (!resellers.length || !resellers[0].telegram_bot_token) {
-                this.pollTimeout = setTimeout(() => this.pollUpdates(), 5000);
-                return;
+            const [resellers] = await db.query(
+                `SELECT * FROM resellers WHERE telegram_bot_token IS NOT NULL AND telegram_bot_token!=''
+                 AND telegram_chat_id IS NOT NULL AND telegram_chat_id!='' AND status='active'`
+            );
+            const grouped = new Map();
+            for (const reseller of resellers) {
+                const token = String(reseller.telegram_bot_token || '').trim();
+                if (!token) continue;
+                if (!grouped.has(token)) grouped.set(token, new Map());
+                grouped.get(token).set(String(reseller.telegram_chat_id).trim(), reseller);
             }
-
-            const reseller = resellers[0];
-            const token = reseller.telegram_bot_token.trim();
-
-            const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${this.lastUpdateId + 1}&timeout=15`;
-            const resp = await axios.get(url, { timeout: 20000 });
-
-            if (resp.data.ok && Array.isArray(resp.data.result)) {
-                for (const update of resp.data.result) {
-                    this.lastUpdateId = update.update_id;
-                    await this.handleUpdate(token, reseller, update);
+            for (const [token, resellersByChat] of grouped) {
+                const existing = this.botStates.get(token);
+                if (existing) existing.resellersByChat = resellersByChat;
+                else {
+                    const state = { token, resellersByChat, lastUpdateId: 0, timer: null, polling: false, disabledUntil: 0 };
+                    this.botStates.set(token, state);
+                    this.schedulePoll(state, 0);
                 }
             }
+            for (const [token, state] of this.botStates) if (!grouped.has(token)) {
+                if (state.timer) clearTimeout(state.timer);
+                state.controller?.abort();
+                this.botStates.delete(token);
+            }
         } catch (err) {
-            // Backoff on network error
+            console.error('[telegram-bot] Configuration refresh failed:', safeErrorDetails(err));
         }
+        if (this.running) this.refreshTimer = setTimeout(() => this.refreshBots(), 30000);
+    }
 
-        if (this.running) {
-            this.pollTimeout = setTimeout(() => this.pollUpdates(), 1500);
+    schedulePoll(state, delay = 1500) {
+        if (!this.running || !this.botStates.has(state.token)) return;
+        if (state.timer) clearTimeout(state.timer);
+        state.timer = setTimeout(() => this.pollBot(state), delay);
+    }
+
+    async pollBot(state) {
+        if (!this.running || state.polling || !this.botStates.has(state.token)) return;
+        if (state.disabledUntil > Date.now()) return this.schedulePoll(state, Math.min(30000, state.disabledUntil - Date.now()));
+        state.polling = true;
+        state.controller = new AbortController();
+        try {
+            const url = `https://api.telegram.org/bot${state.token}/getUpdates`;
+            const resp = await axios.get(url, { params: { offset: state.lastUpdateId + 1, timeout: 15 }, timeout: 20000, signal: state.controller.signal });
+            if (!this.running || this.botStates.get(state.token) !== state) return;
+            if (resp.data?.ok && Array.isArray(resp.data.result)) for (const update of resp.data.result) {
+                state.lastUpdateId = Math.max(state.lastUpdateId, Number(update.update_id) || 0);
+                const incomingChatId = update.message?.chat?.id ?? update.callback_query?.message?.chat?.id;
+                const reseller = state.resellersByChat.get(String(incomingChatId));
+                if (reseller) await this.handleUpdate(state.token, reseller, update);
+                else console.warn('[telegram-bot] Ignored an unassigned Chat ID');
+            }
+        } catch (err) {
+            if (state.controller.signal.aborted) return;
+            const details = safeErrorDetails(err);
+            if (details.status === 409) {
+                const webhookConflict = /webhook/i.test(String(err.response?.data?.description || ''));
+                details.message = webhookConflict
+                    ? 'Telegram webhook is configured; polling paused. Choose one update delivery method.'
+                    : 'Telegram polling conflict; another bot consumer may be running. Polling paused for 15 minutes.';
+                state.disabledUntil = Date.now() + 15 * 60000;
+            }
+            console.error('[telegram-bot] Poll failed:', details);
+            if ([401, 403].includes(details.status)) state.disabledUntil = Date.now() + 60000;
+        } finally {
+            state.polling = false;
+            this.schedulePoll(state);
         }
     }
 
@@ -112,7 +162,7 @@ class TelegramBotEngine {
         const msg = 
 `🟢 <b>Cash App Lightning Pay Assistant</b>
 
-👋 Hello, <b>${name}</b>!
+👋 Hello, <b>${escapeHtml(name)}</b>!
 Choose an action below to view your sales stats, check live Blink/Binance balances, or see recent payment history:`;
 
         const keyboard = {
@@ -290,7 +340,7 @@ ${list.trim()}`;
                 month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
             });
             const icon = s.status === 'completed' ? '🚀' : (s.status === 'held' ? '📦' : '⚠️');
-            list += `${idx + 1}. ${icon} <b>$${parseFloat(s.amount_usd).toFixed(2)} USD</b> (${(s.amount_sats || 0).toLocaleString()} sats)\n   Status: <b>${s.status.toUpperCase()}</b>\n   ℹ️ <i>${s.error_message || (s.status === 'completed' ? 'Swept to Binance' : 'Pending')}</i>\n\n`;
+            list += `${idx + 1}. ${icon} <b>$${parseFloat(s.amount_usd).toFixed(2)} USD</b> (${(s.amount_sats || 0).toLocaleString()} sats)\n   Status: <b>${escapeHtml(String(s.status || 'unknown').toUpperCase())}</b>\n   ℹ️ <i>${escapeHtml(s.error_message || (s.status === 'completed' ? 'Swept to Binance' : 'Pending'))}</i>\n\n`;
         });
 
         const msg = 
@@ -316,8 +366,9 @@ ${list.trim()}`;
         };
         if (replyMarkup) payload.reply_markup = replyMarkup;
 
-        return await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, payload);
+        return await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, payload, { timeout: 10000 });
     }
 }
 
 module.exports = new TelegramBotEngine();
+module.exports.TelegramBotEngine = TelegramBotEngine;

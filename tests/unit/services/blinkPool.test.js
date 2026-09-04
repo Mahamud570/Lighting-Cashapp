@@ -48,10 +48,10 @@ test('createInvoice: falls back to key 2 when key 1 fails', async () => {
 });
 
 test('checkInvoice: checks key 2 if key 1 does not find payment', async () => {
-    // Key 1 returns no transactions
+    // Key 1 returns no matching invoice
     axios.post
-        .mockResolvedValueOnce({ data: { data: { me: { defaultAccount: { wallets: [{ id: 'w1', walletCurrency: 'BTC', transactions: { edges: [] } }] } } } } })
-        // Key 2 finds settled transaction
+        .mockResolvedValueOnce({ data: { data: { me: { defaultAccount: { wallets: [{ id: 'w1', walletCurrency: 'BTC', transactionsByPaymentHash: [] }] } } } } })
+        // Key 2 finds the settled invoice directly by payment hash
         .mockResolvedValueOnce({
             data: {
                 data: {
@@ -59,9 +59,7 @@ test('checkInvoice: checks key 2 if key 1 does not find payment', async () => {
                         defaultAccount: {
                             wallets: [{
                                 id: 'w2', walletCurrency: 'BTC',
-                                transactions: {
-                                    edges: [{ node: { id: 'tx2', status: 'SUCCESS', settlementAmount: 500, initiationVia: { paymentHash: 'target_hash' } } }]
-                                }
+                                transactionsByPaymentHash: [{ id: 'tx2', status: 'SUCCESS', settlementAmount: 500 }]
                             }]
                         }
                     }

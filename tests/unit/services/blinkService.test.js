@@ -66,15 +66,13 @@ test('createInvoice: throws when Blink returns errors array', async () => {
         .rejects.toThrow('Insufficient balance');
 });
 
-// ── checkInvoice (BUG-007 regression) ────────────────────────────────────────
-test('checkInvoice: finds paid tx at position > 25 in list (BUG-007 regression)', async () => {
-    // Simulate 30 pending transactions, then the paid one at position 30
-    const pendingTx = { node: { id: 'x', status: 'PENDING', settlementAmount: 0, initiationVia: { paymentHash: 'other_hash' } } };
-    const paidTx    = { node: { id: 'tx_paid', status: 'SUCCESS', settlementAmount: 1000, initiationVia: { paymentHash: 'target_hash' } } };
-    const edges = [...Array(29).fill(pendingTx), paidTx];
-
+// ── checkInvoice ──────────────────────────────────────────────────────────────
+test('checkInvoice: uses direct payment-hash lookup and detects a paid invoice', async () => {
     axios.post.mockResolvedValue({
-        data: { data: { me: { defaultAccount: { wallets: [{ id: 'w1', walletCurrency: 'BTC', transactions: { edges } }] } } } }
+        data: { data: { me: { defaultAccount: { wallets: [{
+            id: 'w1', walletCurrency: 'BTC',
+            transactionsByPaymentHash: [{ id: 'tx_paid', status: 'SUCCESS', settlementAmount: 1000 }]
+        }] } } } }
     });
 
     const result = await BlinkService.checkInvoice({ apiKey: MOCK_API_KEY, paymentHash: 'target_hash' });
@@ -85,10 +83,21 @@ test('checkInvoice: finds paid tx at position > 25 in list (BUG-007 regression)'
 
 test('checkInvoice: returns paid=false when hash not found', async () => {
     axios.post.mockResolvedValue({
-        data: { data: { me: { defaultAccount: { wallets: [{ id: 'w1', walletCurrency: 'BTC', transactions: { edges: [] } }] } } } }
+        data: { data: { me: { defaultAccount: { wallets: [{ id: 'w1', walletCurrency: 'BTC', transactionsByPaymentHash: [] }] } } } }
     });
     const result = await BlinkService.checkInvoice({ apiKey: MOCK_API_KEY, paymentHash: 'missing_hash' });
     expect(result.paid).toBe(false);
+});
+
+test('checkInvoice: accepts settled status case-insensitively and a single transaction object', async () => {
+    axios.post.mockResolvedValue({
+        data: { data: { me: { defaultAccount: { wallets: [{
+            id: 'w1', walletCurrency: 'BTC',
+            transactionsByPaymentHash: { id: 'tx_settled', status: 'settled', settlementAmount: 750 }
+        }] } } } }
+    });
+    const result = await BlinkService.checkInvoice({ apiKey: MOCK_API_KEY, paymentHash: 'target_hash' });
+    expect(result).toMatchObject({ paid: true, amount_sats: 750, txid: 'tx_settled' });
 });
 
 test('checkInvoice: returns paid=false on API error (no throw)', async () => {

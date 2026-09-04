@@ -4,6 +4,17 @@ const request = require('supertest');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const db = require('../../database/db');
+const LNbitsService = require('../../services/lnbitsService');
+
+let e2eInvoiceSequence = 0;
+jest.spyOn(LNbitsService, 'createInvoice').mockImplementation(async () => {
+    const id = `e2e_payment_hash_${Date.now()}_${++e2eInvoiceSequence}`;
+    return {
+        payment_hash: id,
+        payment_request: `lnbc1000e2etestinvoice${e2eInvoiceSequence}`,
+        checking_id: id
+    };
+});
 
 // Create test express app matching server.js
 function createTestApp() {
@@ -218,6 +229,8 @@ describe('⚡ Full System End-to-End User Journeys', () => {
                 .post('/api/sweeps/save-config')
                 .set('Cookie', resellerCookie)
                 .send({
+                    binance_api_key: 'e2e_binance_key',
+                    binance_api_secret: 'e2e_binance_secret',
                     binance_auto_sweep_enabled: true,
                     binance_sweep_threshold_usd: 10,
                     binance_sweep_type: 'lightning',
@@ -292,7 +305,7 @@ describe('⚡ Full System End-to-End User Journeys', () => {
 
             // Configure demo LNbits on reseller
             await db.query(
-                'UPDATE resellers SET wallet_type = "lnbits", lnbits_url = "https://demo.lnbits.com", lnbits_invoice_key = "4711ae726e11403bb21d8454558e75b9" WHERE id = ?',
+                'UPDATE resellers SET wallet_type = "lnbits", lnbits_url = "https://demo.lnbits.com", lnbits_invoice_key = "e2e_test_key" WHERE id = ?',
                 [resellerId]
             );
 

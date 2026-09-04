@@ -3,7 +3,7 @@
  * Covers: valid JWT, missing token, S-002 regression (hardcoded secret),
  *         expired session, tampered signature, inactive account, proxy IP.
  */
-jest.mock('../../../database/db');
+jest.mock('../../../database/db', () => ({ query: jest.fn() }));
 jest.mock('jsonwebtoken');
 
 const jwt = require('jsonwebtoken');

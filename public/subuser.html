@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Merchant Panel — Lightning Pay</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/design-v2.css?v=8">
 <style>
 :root{--bg:#0b0e13;--card:#11161f;--border:#242b36;--text:#f3f4f6;--muted:#8d98a8;--green:#00d632;--blue:#38bdf8;--yellow:#f5c451;--red:#ef4444}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,Arial,sans-serif}button,input{font:inherit}.wrap{max-width:1380px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:18px 24px;border-bottom:1px solid var(--border);background:#0d1117;position:sticky;top:0;z-index:10}.brand{font-weight:800;font-size:20px}.badge{font-size:11px;color:var(--blue);border:1px solid #244b60;padding:4px 8px;border-radius:999px;margin-left:8px}.user{color:var(--muted);font-size:14px}.btn{border:1px solid var(--border);background:#171d27;color:var(--text);padding:9px 13px;border-radius:8px;cursor:pointer}.btn:hover{border-color:#3b4655}.btn-primary{background:var(--green);border-color:var(--green);color:#000;font-weight:700}.btn-danger{color:#ff8585}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px}.metric-label{font-size:12px;color:var(--muted);margin-bottom:8px}.metric{font-size:25px;font-weight:800}.green{color:var(--green)}.blue{color:var(--blue)}.yellow{color:var(--yellow)}.muted{color:var(--muted)}.section{margin-top:22px}.section-title{font-size:17px;font-weight:800;margin-bottom:12px}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:760px}th,td{text-align:left;padding:12px;border-bottom:1px solid var(--border);font-size:13px}th{font-size:11px;text-transform:uppercase;color:var(--muted)}.link{color:var(--green);text-decoration:none}.pill{display:inline-block;padding:4px 8px;border-radius:999px;font-size:11px;text-transform:uppercase;font-weight:700}.pill-paid{background:#123c20;color:#6ff08c}.pill-pending{background:#3c3312;color:#f5d76b}.pill-expired,.pill-rejected{background:#3a1a1a;color:#ff8b8b}.pill-approved{background:#12334a;color:#75cfff}.qr-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}.qr-card{display:flex;gap:16px;align-items:center}.qr-box{width:180px;height:180px;background:#fff;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none}.qr-box canvas,.qr-box img{max-width:170px;max-height:170px}.actions{display:flex;gap:8px;flex-wrap:wrap}.withdraw{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.withdraw input{background:#0b0e13;border:1px solid var(--border);color:var(--text);padding:10px;border-radius:8px;width:180px}.hint{font-size:12px;color:var(--muted);margin-top:7px}.notice{padding:12px;border:1px solid #284055;background:#0e1a24;border-radius:9px;color:#b8d8ed;font-size:13px}.empty{text-align:center;padding:30px;color:var(--muted)}.error{color:#ff8b8b}.two{display:grid;grid-template-columns:1.2fr .8fr;gap:14px}@media(max-width:1000px){.grid{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}}@media(max-width:600px){.wrap{padding:14px}.top{padding:14px}.grid{grid-template-columns:1fr}.qr-card{align-items:flex-start;flex-direction:column}.user{display:none}}
@@ -13,7 +14,7 @@
 <body>
 <header class="top">
   <div class="brand">⚡ Lightning Pay <span class="badge">SUB-USER</span></div>
-  <div style="display:flex;align-items:center;gap:12px"><span class="user" id="userName">Loading...</span><button class="btn btn-danger" id="logoutBtn">Logout</button></div>
+  <div style="display:flex;align-items:center;gap:12px"><span class="user" id="userName">Loading...</span><button class="btn btn-primary" id="returnOwnerBtn" style="display:none">← Return to Owner</button><button class="btn btn-danger" id="logoutBtn">Logout</button></div>
 </header>
 
 <main class="wrap">
@@ -37,7 +38,7 @@
         <div><div class="metric-label">Conversion</div><strong id="conversion">0%</strong></div>
       </div>
     </div>
-    <div class="card">
+    <div class="card" id="withdrawSection">
       <div class="section-title">Request Withdrawal</div>
       <div class="withdraw"><div><input id="withdrawAmount" type="number" min="0.01" step="0.01" placeholder="Amount ($)"><div class="hint">Base balance before your rate is applied.</div></div><button class="btn btn-primary" id="withdrawBtn">Request withdraw</button></div>
       <div class="hint" id="withdrawMessage"></div>
@@ -72,6 +73,7 @@
 
 <script src="/js/qrcode.min.js"></script>
 <script>
+const PUBLIC_ORIGIN = window.location.origin.replace(/:\/\/www\./i, '://');
 const $ = id => document.getElementById(id);
 const money = n => '$' + Number(n || 0).toFixed(2);
 const esc = value => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
@@ -95,7 +97,7 @@ function renderLinks(links) {
   if (!assignedLinks.length) { body.innerHTML = '<tr><td colspan="8" class="empty">No payment links have been assigned yet.</td></tr>'; return; }
   assignedLinks.forEach(l => {
     const tr = document.createElement('tr');
-    const url = `${location.origin}/pay/${encodeURIComponent(l.slug)}`;
+    const url = `${PUBLIC_ORIGIN}/pay/${encodeURIComponent(l.slug)}`;
     const amount = l.amount_type === 'fixed' && l.fixed_amount != null ? money(l.fixed_amount) : 'Open amount';
     tr.innerHTML = `<td>${esc(l.title)}</td><td><a class="link" target="_blank" rel="noopener" href="${esc(url)}">/pay/${esc(l.slug)}</a></td><td>${esc(amount)}</td><td>${Number(l.clicks||0)}</td><td>${Number(l.invoice_count||0)}</td><td>${money(l.paid_volume)}</td><td>${statusPill(l.status)}</td><td><div class="actions"><button class="btn copy" data-url="${esc(url)}">Copy</button><button class="btn qr" data-url="${esc(url)}">QR</button></div></td>`;
     body.appendChild(tr);
@@ -108,7 +110,7 @@ function renderQR(links) {
   const grid = $('qrGrid'); grid.textContent='';
   if (!links.length) { grid.innerHTML='<div class="card empty">No assigned links available for QR codes.</div>'; return; }
   links.forEach((l, i) => {
-    const url = `${location.origin}/pay/${encodeURIComponent(l.slug)}`;
+    const url = `${PUBLIC_ORIGIN}/pay/${encodeURIComponent(l.slug)}`;
     const card = document.createElement('div'); card.className = 'card qr-card';
     const box = document.createElement('div'); box.className = 'qr-box';
     const canvas = document.createElement('canvas'); canvas.id = `qr-${i}`;
@@ -167,7 +169,7 @@ async function loadAnalytics() {
   d.links.forEach(l=>{const tr=document.createElement('tr'); tr.innerHTML=`<td>${esc(l.title)} <span class="muted">/${esc(l.slug)}</span></td><td>${Number(l.clicks||0)}</td><td>${Number(l.invoice_count||0)}</td><td>${Number(l.paid_count||0)}</td><td>${money(l.paid_volume)}</td>`;pb.appendChild(tr);});
   const rb=$('paymentsBody'); rb.textContent='';
   if(!d.recent_payments.length) rb.innerHTML='<tr><td colspan="4" class="empty">No payments yet.</td></tr>';
-  d.recent_payments.forEach(p=>{const tr=document.createElement('tr');tr.innerHTML=`<td>${esc(new Date(p.created_at).toLocaleString())}</td><td>${esc(p.title||p.slug||'—')}</td><td>${money(p.total_usd)}</td><td>${statusPill(p.status)}</td>`;rb.appendChild(tr);});
+  d.recent_payments.forEach(p=>{const tr=document.createElement('tr');tr.innerHTML=`<td>${esc(new Date(p.created_at).toLocaleString())}</td><td>${esc(p.title||p.slug||'—')}</td><td>${money(p.amount_usd)}</td><td>${statusPill(p.status)}</td>`;rb.appendChild(tr);});
 }
 
 async function loadWithdrawals() {
@@ -184,8 +186,9 @@ $('withdrawBtn').addEventListener('click', async()=>{
 });
 
 $('logoutBtn').addEventListener('click', async()=>{try{await fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'});}finally{location.href='/login';}});
+$('returnOwnerBtn').addEventListener('click', async()=>{try{const d=await api('/api/auth/exit-preview',{method:'POST'});location.href=d.redirect||'/owner';}catch(e){alert(e.message);}});
 
-async function loadAll(){try{await Promise.all([loadOverview(),loadLinks(),loadAnalytics(),loadWithdrawals()]);}catch(e){console.error(e); if(e.message==='Unauthorized'||e.message==='Session expired') location.href='/login';}}
+async function loadAll(){try{const [me]=await Promise.all([api('/api/me'),loadOverview(),loadLinks(),loadAnalytics(),loadWithdrawals()]);$('returnOwnerBtn').style.display=me.owner_preview?'inline-flex':'none';$('withdrawSection').style.display=me.owner_preview?'none':'block';}catch(e){console.error(e); if(e.message==='Unauthorized'||e.message==='Session expired') location.href='/login';}}
 loadAll();
 setInterval(loadAll,15000);
 </script>

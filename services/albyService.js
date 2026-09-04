@@ -86,6 +86,17 @@ class AlbyService {
         };
     }
 
+    static async checkInvoice({ accessToken, paymentHash }) {
+        if (!accessToken) throw new Error('Alby Access Token is missing. Re-enter it in Wallet Settings.');
+        if (!paymentHash) throw new Error('Alby payment hash is missing.');
+        const resp = await axios.get(`${this.BASE_URL}/invoices/${encodeURIComponent(paymentHash)}`, {
+            headers: { Authorization: `Bearer ${accessToken}` }, timeout: 7000
+        });
+        const data = resp.data || {};
+        const state = String(data.state || data.status || '').toLowerCase();
+        return { paid: data.settled === true || data.paid === true || ['settled','paid','complete','completed'].includes(state) };
+    }
+
     /**
      * Pay an outbound BOLT11 invoice using Alby API (for instant payouts & sweeps)
      */

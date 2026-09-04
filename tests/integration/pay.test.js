@@ -3,7 +3,7 @@
  * Covers: invoice creation validation, note sanitization, error sanitization,
  *         status poll using InvoiceChecker (BUG-003 DRY fix), auto-settlement.
  */
-jest.mock('../../database/db');
+jest.mock('../../database/db', () => ({ query: jest.fn() }));
 jest.mock('../../middleware/auth');
 jest.mock('../../services/invoiceChecker');
 jest.mock('../../services/payoutService');
@@ -42,7 +42,9 @@ const mockLink = {
     charge_mode: 'none', charge_value: 0,
     wallet_type: 'lnbits', lnbits_url: 'https://legend.lnbits.com',
     lnbits_invoice_key: 'key123', lnbits_admin_key: null,
-    blink_api_key: null, opennode_api_key: null
+    blink_api_key: null, opennode_api_key: null,
+    reseller_status: 'active', payments_paused: 0,
+    max_payment_usd: 0, max_daily_volume_usd: 0
 };
 
 beforeEach(() => {
@@ -54,15 +56,56 @@ beforeEach(() => {
     });
     qrcode.toDataURL.mockResolvedValue('data:image/png;base64,mock');
     PayoutService.processAutoSettlement.mockResolvedValue(undefined);
+    PayoutService.getBtcPrice.mockResolvedValue(65000);
     axios.get.mockResolvedValue({ data: { data: { amount: '65000.00' } } });
     LNbitsService.createInvoice.mockResolvedValue({
         payment_hash: 'hash123', payment_request: 'lnbc...', checking_id: 'chk1'
     });
 });
 
+test('iMessage mode emits personalized text and green-card image preview', async () => {
+    db.query
+        .mockResolvedValueOnce([[{ ...mockLink, title: 'Jessica', brand_name: 'Cash Pay', preview_mode: 'imessage_compact' }]])
+        .mockResolvedValueOnce([{ insertId: 1 }])
+        .mockResolvedValueOnce([{ affectedRows: 1 }]);
+    const res = await request(app).get('/pay/test-link').set('User-Agent', 'AppleLinkPresentation/1.0');
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('property="og:title" content="Pay Jessica"');
+    expect(res.text).not.toContain('property="og:description"');
+    expect(res.text).not.toContain('property="og:site_name"');
+    expect(res.text).toContain('property="og:image"');
+    expect(res.text).toContain('/pay/test-link/preview.svg?v=2');
+    expect(res.text).toContain('image/svg+xml');
+});
+
+test('Telegram keeps the existing full image preview for compact-mode links', async () => {
+    db.query
+        .mockResolvedValueOnce([[{ ...mockLink, title: 'Jessica', brand_name: 'Cash Pay', preview_mode: 'imessage_compact' }]])
+        .mockResolvedValueOnce([{ insertId: 1 }])
+        .mockResolvedValueOnce([{ affectedRows: 1 }]);
+    const res = await request(app).get('/pay/test-link').set('User-Agent', 'TelegramBot (like TwitterBot)');
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('property="og:title" content="Pay with Cash App"');
+    expect(res.text).toContain('property="og:image"');
+    expect(res.text).toContain('/img/cashapp-social-card.png');
+});
+
+test('non-Apple clients also keep the full preview for compact-mode links', async () => {
+    db.query
+        .mockResolvedValueOnce([[{ ...mockLink, title: 'Jessica', brand_name: 'Cash Pay', preview_mode: 'imessage_compact' }]])
+        .mockResolvedValueOnce([{ insertId: 1 }])
+        .mockResolvedValueOnce([{ affectedRows: 1 }]);
+    const res = await request(app).get('/pay/test-link').set('User-Agent', 'Mozilla/5.0 (Linux; Android 14) Chrome/120');
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('property="og:title" content="Pay with Cash App"');
+    expect(res.text).toContain('property="og:image"');
+});
+
 // -- Amount validation --------------------------------------------------------
 test('Invoice: amount below min -> 400', async () => {
-    db.query.mockResolvedValueOnce([[mockLink]]);
+    db.query
+        .mockResolvedValueOnce([[mockLink]])
+        .mockResolvedValueOnce([[]]); // platform settings
     const res = await request(app)
         .post('/api/pay/test-link/invoice')
         .send({ amount: 0.5 });
@@ -71,7 +114,9 @@ test('Invoice: amount below min -> 400', async () => {
 });
 
 test('Invoice: amount above max -> 400', async () => {
-    db.query.mockResolvedValueOnce([[mockLink]]);
+    db.query
+        .mockResolvedValueOnce([[mockLink]])
+        .mockResolvedValueOnce([[]]); // platform settings
     const res = await request(app)
         .post('/api/pay/test-link/invoice')
         .send({ amount: 1500 });
@@ -81,7 +126,8 @@ test('Invoice: amount above max -> 400', async () => {
 test('A-007 regression: null max_amount does NOT block invoice creation', async () => {
     db.query
         .mockResolvedValueOnce([[{ ...mockLink, max_amount: null }]])
-        .mockResolvedValueOnce([[{ insertId: 99 }]]);
+        .mockResolvedValueOnce([[]]) // platform settings
+        .mockResolvedValueOnce([{ insertId: 99 }, []]);
     const res = await request(app)
         .post('/api/pay/test-link/invoice')
         .send({ amount: 999999 });
@@ -92,7 +138,8 @@ test('A-007 regression: null max_amount does NOT block invoice creation', async 
 test('Invoice: note > 500 chars is truncated not rejected', async () => {
     db.query
         .mockResolvedValueOnce([[mockLink]])
-        .mockResolvedValueOnce([[{ insertId: 1 }]]);
+        .mockResolvedValueOnce([[]]) // platform settings
+        .mockResolvedValueOnce([{ insertId: 1 }, []]);
     const longNote = 'A'.repeat(600);
     const res = await request(app)
         .post('/api/pay/test-link/invoice')
@@ -108,7 +155,9 @@ test('Invoice: note > 500 chars is truncated not rejected', async () => {
 
 // -- Error sanitization -------------------------------------------------------
 test('Invoice: internal error does NOT expose API key in response', async () => {
-    db.query.mockResolvedValueOnce([[mockLink]]);
+    db.query
+        .mockResolvedValueOnce([[mockLink]])
+        .mockResolvedValueOnce([[]]); // platform settings
     LNbitsService.createInvoice.mockRejectedValueOnce(new Error('API key: sk_live_secret'));
     const res = await request(app)
         .post('/api/pay/test-link/invoice')
@@ -116,6 +165,42 @@ test('Invoice: internal error does NOT expose API key in response', async () => 
     expect(res.status).toBe(500);
     expect(res.body.error).not.toContain('sk_live_secret');
     expect(res.body.error).not.toContain('API key');
+});
+
+test('Invoice persists the exact integer satoshi amount used to create it', async () => {
+    db.query
+        .mockResolvedValueOnce([[mockLink]])
+        .mockResolvedValueOnce([[]])
+        .mockResolvedValueOnce([{ insertId: 101 }, []]);
+
+    const res = await request(app)
+        .post('/api/pay/test-link/invoice')
+        .send({ amount: 25 });
+
+    expect(res.status).toBe(200);
+    const insertArgs = db.query.mock.calls.find(call => call[0].includes('INSERT INTO payments'));
+    expect(insertArgs[0]).toContain('amount_sats');
+    expect(insertArgs[1][8]).toBe(38462);
+    expect(Number.isInteger(insertArgs[1][8])).toBe(true);
+});
+
+test('Invoice: closed provider channel returns a safe wallet-unavailable response', async () => {
+    db.query
+        .mockResolvedValueOnce([[mockLink]])
+        .mockResolvedValueOnce([[]]); // platform settings
+    LNbitsService.createInvoice.mockRejectedValueOnce(new Error(
+        'Channel has been shut down [traceId: abc123, pubKey: 0205967445, clientEnv: js-spark-sdk]'
+    ));
+
+    const res = await request(app)
+        .post('/api/pay/test-link/invoice')
+        .send({ amount: 25 });
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe("This merchant's payment wallet is temporarily unavailable. Please contact the merchant.");
+    expect(res.body.error).not.toContain('traceId');
+    expect(res.body.error).not.toContain('pubKey');
+    expect(db.query.mock.calls.some(call => String(call[0]).includes('INSERT INTO payments'))).toBe(false);
 });
 
 // -- Status poll (BUG-003 DRY regression) -------------------------------------

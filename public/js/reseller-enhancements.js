@@ -53,7 +53,7 @@
     if (sub) sub.textContent = 'Choose and configure your wallet connection.';
 
     const configs = {
-      rcLnbits: { title:'⚡ LNB', badge:'Type A', sub:'Wallet connection A.', labels:['Endpoint','Key A','Key B'], hints:['',''] },
+      rcLnbits: { title:'⚡ LNB', badge:'Type A', sub:'Wallet connection A.', labels:['Endpoint','Invoice Key','Admin Key'], hints:['',''] },
       rcBlink: { title:'⚡ LNP', badge:'Type B', sub:'Wallet connection B.', labels:['Primary Key','Wallet ID','Key Pool'] },
       rcAlby: { title:'🐝 ALB / NWC', badge:'Type C', sub:'Wallet connection C.', labels:['Access Key','Connection Key (Optional)'] },
       rcEmail: { title:'⚡ LNA', badge:'Type D', sub:'Direct wallet address.', labels:['Wallet Address'] },
@@ -74,7 +74,7 @@
     });
 
     const placeholders = {
-      lnbitsUrl:'https://wallet.example', lnbitsInvoiceKey:'key_a', lnbitsAdminKey:'key_b',
+      lnbitsUrl:'https://wallet.example', lnbitsInvoiceKey:'invoice_key', lnbitsAdminKey:'admin_key',
       blinkApiKey:'primary_key', blinkWalletId:'wallet_id', blinkApiKeys:'one key per line',
       albyAccessToken:'access_key', albyNwcString:'connection_key', walletEmail:'name@wallet',
       opennodeKey:'access_key', btcpayUrl:'https://wallet.example', btcpayStoreId:'store_id',

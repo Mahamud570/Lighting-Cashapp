@@ -106,9 +106,9 @@ router.get('/api/analytics/chart', auth, async (req, res) => {
         const period = parseInt(req.query.period, 10) || 30;
         const days   = Math.min(Math.max(period, 7), 90); // clamp 7–90
 
-        // FIX BUG-002: was string-interpolated into SQL; now a safe parameterised value.
-        // SQLite datetime('now', ?) accepts modifier strings like '-30 days'.
-        const intervalParam = `-${days} days`;
+        // Use an absolute parameterised cutoff. It is accepted by both SQLite and
+        // MySQL and avoids relying on database-specific datetime modifier syntax.
+        const cutoff = new Date(Date.now() - (days * 24 * 60 * 60 * 1000));
 
         const [rows] = await db.query(`
             SELECT
@@ -117,10 +117,10 @@ router.get('/api/analytics/chart', auth, async (req, res) => {
                 COUNT(*)                    AS count
             FROM payments
             WHERE reseller_id = ? AND status = 'paid'
-              AND paid_at >= datetime('now', ?)
+              AND paid_at >= ?
             GROUP BY date(paid_at)
             ORDER BY day ASC
-        `, [id, intervalParam]);
+        `, [id, cutoff]);
 
         // Fill missing days with zeros so the chart always has a complete series
         const dataMap = {};

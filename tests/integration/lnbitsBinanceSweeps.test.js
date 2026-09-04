@@ -1,8 +1,17 @@
+jest.mock('axios');
+jest.mock('../../database/db', () => ({ query: jest.fn() }));
+
+const axios = require('axios');
 const LNbitsService = require('../../services/lnbitsService');
 const BinanceService = require('../../services/binanceService');
 const PayoutService = require('../../services/payoutService');
 
 describe('LNbits Payment Gateway & Automated Binance Sweeper Pipeline', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        PayoutService.lastBtcPriceFetch = 0;
+        axios.get.mockResolvedValue({ data: { data: { amount: '65000.00' } } });
+    });
 
     describe('LNbitsService', () => {
         test('should normalize URL properly by stripping trailing slashes', () => {

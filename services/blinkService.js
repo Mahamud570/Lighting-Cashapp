@@ -210,7 +210,7 @@ class BlinkService {
      */
     static async checkInvoice({ apiKey, apiKeys, paymentHash }) {
         const keys = this.parseApiKeys(apiKey, apiKeys);
-        if (!keys.length) return { paid: false };
+        if (!keys.length || !paymentHash) return { paid: false };
 
         const query = `
             query CheckInvoice($paymentHash: PaymentHash!) {
@@ -219,19 +219,10 @@ class BlinkService {
                         wallets {
                             id
                             walletCurrency
-                            transactions(first: 100) {
-                                edges {
-                                    node {
-                                        id
-                                        status
-                                        settlementAmount
-                                        initiationVia {
-                                            ... on InitiationViaLn {
-                                                paymentHash
-                                            }
-                                        }
-                                    }
-                                }
+                            transactionsByPaymentHash(paymentHash: $paymentHash) {
+                                id
+                                status
+                                settlementAmount
                             }
                         }
                     }
@@ -239,32 +230,36 @@ class BlinkService {
             }
         `;
 
+        let lastError = null;
         for (const key of keys) {
             try {
                 const data = await this.request(key, query, { paymentHash });
                 const wallets = data?.me?.defaultAccount?.wallets || [];
 
                 for (const w of wallets) {
-                    const edges = w.transactions?.edges || [];
-                    const match = edges.find(
-                        e => e.node?.initiationVia?.paymentHash === paymentHash &&
-                             e.node?.status === 'SUCCESS'
+                    const rawTransactions = w.transactionsByPaymentHash;
+                    const transactions = Array.isArray(rawTransactions)
+                        ? rawTransactions
+                        : (rawTransactions ? [rawTransactions] : []);
+                    const transaction = transactions.find(tx =>
+                        ['SUCCESS', 'SETTLED', 'PAID'].includes(String(tx?.status || '').toUpperCase())
                     );
-                    if (match) {
+                    if (transaction) {
                         return {
                             paid:        true,
-                            amount_sats: match.node.settlementAmount,
-                            txid:        match.node.id,
+                            amount_sats: transaction?.settlementAmount,
+                            txid:        transaction?.id,
                             used_key:    key
                         };
                     }
                 }
             } catch (err) {
-                // Key error, try next key in pool
+                // A pool may contain an expired/revoked key. Try the remaining keys.
+                lastError = err;
             }
         }
 
-        return { paid: false };
+        return { paid: false, error: lastError?.message || null };
     }
 }
 

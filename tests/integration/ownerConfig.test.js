@@ -1,7 +1,7 @@
 /**
  * Integration Tests: routes/owner.js (Master Reseller Configuration)
  */
-jest.mock('../../database/db');
+jest.mock('../../database/db', () => ({ query: jest.fn() }));
 jest.mock('../../middleware/auth');
 
 const request = require('supertest');
@@ -31,7 +31,7 @@ test('GET /api/owner/resellers/:id: returns reseller config without password', a
     const res = await request(app).get('/api/owner/resellers/2');
     expect(res.status).toBe(200);
     expect(res.body.username).toBe('reseller_bob');
-    expect(res.body.blink_api_key).toBe('key123');
+    expect(res.body.blink_api_key).toBe('••••••••y123');
     expect(res.body.password).toBeUndefined();
 });
 

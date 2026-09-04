@@ -1,7 +1,7 @@
 /**
  * Integration Tests: Master Boss Password Management
  */
-jest.mock('../../database/db');
+jest.mock('../../database/db', () => ({ query: jest.fn() }));
 jest.mock('../../middleware/auth');
 
 const request = require('supertest');

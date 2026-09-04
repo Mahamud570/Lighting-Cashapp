@@ -7,6 +7,17 @@ const { createObjectCsvWriter } = require('csv-writer');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const GeoIpService = require('../services/geoIpService');
+
+function backfillLocations(payments) {
+    const missing = payments.filter(payment => payment.payer_ip && (!payment.payer_location || /location (?:disabled|unavailable|unknown)/i.test(payment.payer_location))).slice(0, 20);
+    if (!missing.length) return;
+    Promise.all(missing.map(async payment => {
+        const location = await GeoIpService.lookup(payment.payer_ip);
+        if (/location (?:disabled|unavailable|unknown)/i.test(location)) return;
+        await db.query('UPDATE payments SET payer_location=? WHERE id=? AND reseller_id=?', [location, payment.id, payment.reseller_id]);
+    })).catch(err => console.error('[geo] Payment location backfill failed:', err.message));
+}
 
 // Sub-users may view only their own payments.
 router.get('/api/payments', auth, async (req, res) => {
@@ -22,6 +33,9 @@ router.get('/api/payments', auth, async (req, res) => {
         if (status && status !== 'all') { where += ' AND p.status = ?'; params.push(status); }
         if (from) { where += ' AND date(p.created_at) >= date(?)'; params.push(from); }
         if (to) { where += ' AND date(p.created_at) <= date(?)'; params.push(to); }
+        // Keep expired invoices in MySQL and exports, but remove dashboard noise
+        // ten minutes after their expiry time.
+        where += " AND NOT (p.status = 'expired' AND p.expires_at <= datetime('now', '-10 minutes'))";
 
         const [payments] = await db.query(
             `SELECT p.*, pl.slug, pl.title FROM payments p
@@ -30,6 +44,7 @@ router.get('/api/payments', auth, async (req, res) => {
             [...params, safeLimit, offset]
         );
         const [[{ total }]] = await db.query(`SELECT COUNT(*) as total FROM payments p WHERE ${where}`, params);
+        backfillLocations(payments);
         res.json({ payments, total, page: safePage, limit: safeLimit });
     } catch (err) { res.status(500).json({ error: 'Failed to load payments' }); }
 });
@@ -70,6 +85,56 @@ router.patch('/api/payments/:id/check', auth, requireRole('reseller', 'owner'), 
     } catch (err) { res.status(500).json({ error: 'Failed to update payment' }); }
 });
 
+// Direct Lightning Address providers may not expose LUD-21 verification.
+// An authenticated reseller/owner can reconcile a wallet-confirmed payment,
+// but only for direct-address invoices and only after an explicit confirmation.
+router.patch('/api/payments/:id/confirm-paid', auth, requireRole('reseller', 'owner'), async (req, res) => {
+    try {
+        if (req.body?.confirmed !== true) {
+            return res.status(400).json({ error: 'Explicit wallet receipt confirmation is required' });
+        }
+
+        const [payments] = await db.query(
+            `SELECT id, provider, status, total_usd FROM payments
+             WHERE id = ? AND reseller_id = ?`,
+            [req.params.id, req.reseller.id]
+        );
+        if (!payments.length) return res.status(404).json({ error: 'Payment not found' });
+
+        const payment = payments[0];
+        if (payment.provider !== 'email') {
+            return res.status(400).json({ error: 'API-connected payments must be verified by their payment provider' });
+        }
+        if (!['pending', 'expired'].includes(payment.status)) {
+            return res.status(409).json({ error: `Payment is already ${payment.status}` });
+        }
+
+        const [result] = await db.query(
+            `UPDATE payments
+             SET status = 'paid', paid_at = datetime('now'), seller_checked = 1
+             WHERE id = ? AND reseller_id = ? AND provider = 'email' AND status IN ('pending','expired')`,
+            [payment.id, req.reseller.id]
+        );
+        if (!result.affectedRows) return res.status(409).json({ error: 'Payment status changed; refresh and try again' });
+
+        await db.query(
+            'INSERT INTO activities (reseller_id, actor, event, description, ip) VALUES (?,?,?,?,?)',
+            [req.reseller.id, req.reseller.username, 'manual_payment_confirmation', `Manually confirmed direct-wallet payment #${payment.id} ($${Number(payment.total_usd || 0).toFixed(2)})`, req.clientIp || req.ip]
+        ).catch(() => {});
+
+        const io = req.app.get('io');
+        if (io) {
+            io.to(`reseller:${req.reseller.id}`).emit('payment:update', { id: payment.id, status: 'paid' });
+            io.to(`payment:${payment.id}`).emit('status', { status: 'paid' });
+        }
+
+        res.json({ success: true, status: 'paid' });
+    } catch (err) {
+        console.error('[payments] Manual confirmation error:', err && err.message ? err.message : err);
+        res.status(500).json({ error: 'Failed to confirm payment' });
+    }
+});
+
 // Activity/audit timeline is reseller/owner only.
 router.get('/api/activities', auth, requireRole('reseller', 'owner'), async (req, res) => {
     try {
@@ -93,7 +158,9 @@ router.post('/api/transaction-charge', auth, requireRole('reseller', 'owner'), a
     try {
         const { charge_mode, charge_value } = req.body;
         if (!['none', 'fixed', 'percent'].includes(charge_mode)) return res.status(400).json({ error: 'Invalid charge mode' });
-        await db.query('UPDATE resellers SET charge_mode = ?, charge_value = ? WHERE id = ?', [charge_mode, parseFloat(charge_value) || 0, req.reseller.id]);
+        const value = charge_mode === 'none' ? 0 : Number(charge_value);
+        if (!Number.isFinite(value) || value < 0 || (charge_mode === 'fixed' && value > 100) || (charge_mode === 'percent' && value > 50)) return res.status(400).json({ error: 'Charge value is outside the allowed range' });
+        await db.query('UPDATE resellers SET charge_mode = ?, charge_value = ? WHERE id = ?', [charge_mode, value, req.reseller.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: 'Failed to save transaction charge' }); }
 });

@@ -21,6 +21,7 @@
     .trust-browser span { display:block; font-size:11px; color:var(--text-muted); margin-top:2px; line-height:1.45; }
     @media(max-width:480px){ .auth-card{padding:26px 18px;border-radius:14px}.auth-logo{margin-bottom:22px}.auth-logo h1{font-size:22px}.form-control{font-size:16px}.btn-auth{min-height:46px}.trust-browser{padding:11px 12px} }
   </style>
+  <link rel="stylesheet" href="/css/design-v2.css?v=6">
 </head>
 <body>
 <div class="auth-card">
@@ -97,7 +98,7 @@ async function login() {
                     <input class="form-control" type="text" inputmode="numeric" autocomplete="one-time-code" id="totpCode" placeholder="6-digit code" maxlength="6" style="letter-spacing:6px;font-size:20px;text-align:center;" onkeydown="if(event.key==='Enter')login()">
                     <label class="trust-browser">
                       <input type="checkbox" id="trustBrowser" checked>
-                      <span><strong>Trust this browser</strong><span>Skip 2FA on this saved browser for 30 days. You can remove it later from Sessions & Browsers.</span></span>
+                      <span><strong>Remember this browser for 30 days</strong><span>Skip 2FA on this browser. The 30-day period refreshes whenever you sign in. You can remove it later from Sessions & Browsers.</span></span>
                     </label>
                 `;
                 btn.parentNode.insertBefore(twofaGroup, btn);

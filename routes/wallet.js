@@ -9,8 +9,27 @@ const BlinkService = require('../services/blinkService');
 const AlbyService = require('../services/albyService');
 const BinanceService = require('../services/binanceService');
 const TelegramService = require('../services/telegramService');
+const { resolveStoredSecret, maskSecret } = require('../utils/secrets');
 
 router.use('/api/wallet*', auth, requireRole('reseller', 'owner'));
+
+const isMasked = value => typeof value === 'string' && value.startsWith('***');
+const clean = value => typeof value === 'string' ? value.trim() : '';
+
+function parseSubmittedKeys(value) {
+    if (Array.isArray(value)) return value.map(clean).filter(Boolean);
+    const submitted = clean(value);
+    if (!submitted) return [];
+    try {
+        const parsed = JSON.parse(submitted);
+        if (Array.isArray(parsed)) return parsed.map(clean).filter(Boolean);
+    } catch (_) {}
+    return submitted.split(/[\n,]+/).map(clean).filter(Boolean);
+}
+
+function unique(values) {
+    return [...new Set(values.filter(Boolean))];
+}
 
 // GET /api/wallet - retrieve all connected gateway configs and balances
 router.get('/api/wallet', auth, async (req, res) => {
@@ -22,13 +41,14 @@ router.get('/api/wallet', auth, async (req, res) => {
             wallet_type: r.wallet_type,
             wallet_email: r.wallet_email,
             // OpenNode
-            opennode_api_key: r.opennode_api_key ? '***' + r.opennode_api_key.slice(-4) : null,
+            opennode_api_key: maskSecret(r.opennode_api_key),
             opennode_env: r.opennode_env,
             // BTCPay
             btcpay_url: r.btcpay_url,
             btcpay_store_id: r.btcpay_store_id,
             btcpay_api_key: r.btcpay_api_key ? '***' + r.btcpay_api_key.slice(-4) : null,
             btcpay_webhook_id: r.btcpay_webhook_id,
+            btcpay_webhook_secret: maskSecret(r.btcpay_webhook_secret),
             // LNbits
             lnbits_url: r.lnbits_url,
             lnbits_invoice_key: r.lnbits_invoice_key ? '***' + r.lnbits_invoice_key.slice(-4) : null,
@@ -59,10 +79,20 @@ router.get('/api/wallet', auth, async (req, res) => {
             // Telegram Bot
             telegram_bot_token: r.telegram_bot_token ? '***' + r.telegram_bot_token.slice(-6) : null,
             telegram_chat_id: r.telegram_chat_id || '',
-            status: r.wallet_type ? 'active' : 'inactive'
+            status: r.wallet_type ? 'active' : 'inactive',
+            credentials_required: (() => {
+                const missing = [];
+                if (r.wallet_type === 'lnbits' && !r.lnbits_invoice_key) missing.push('LNbits Invoice Key');
+                if (r.wallet_type === 'blink' && !r.blink_api_key && !r.blink_api_keys) missing.push('Blink API Key');
+                if (r.wallet_type === 'opennode' && !r.opennode_api_key) missing.push('OpenNode API Key');
+                if (r.wallet_type === 'btcpay' && (!r.btcpay_url || !r.btcpay_store_id || !r.btcpay_api_key)) missing.push('BTCPay credentials');
+                if (r.wallet_type === 'alby' && !r.alby_access_token && !r.alby_nwc_string) missing.push('Alby credentials');
+                return missing;
+            })()
         });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        console.error('[wallet] Load configuration failed:', err && err.message ? err.message : err);
+        res.status(500).json({ error: 'Failed to load wallet configuration' });
     }
 });
 
@@ -70,7 +100,9 @@ router.get('/api/wallet', auth, async (req, res) => {
 router.post('/api/wallet/email', auth, async (req, res) => {
     try {
         const { email } = req.body;
-        if (!email) return res.status(400).json({ error: 'Lightning Address required' });
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+            return res.status(400).json({ error: 'A valid Lightning Address is required' });
+        }
 
         await db.query(
             'UPDATE resellers SET wallet_type = "email", wallet_email = ? WHERE id = ?',
@@ -79,7 +111,123 @@ router.post('/api/wallet/email', auth, async (req, res) => {
 
         res.json({ success: true, message: 'Lightning Address saved' });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: 'Failed to save Lightning Address' });
+    }
+});
+
+// POST /api/wallet/email/test - verify that a Lightning Address exposes a
+// usable LNURL-pay endpoint without creating an invoice or moving funds.
+router.post('/api/wallet/email/test', auth, async (req, res) => {
+    try {
+        const address = clean(req.body.email).toLowerCase();
+        const match = address.match(/^([^\s@]+)@([^\s@]+\.[^\s@]+)$/);
+        if (!match) return res.status(400).json({ error: 'Enter a valid Lightning Address.' });
+
+        const [, username, domain] = match;
+        if (domain === 'localhost' || domain.endsWith('.local') || /^\d+(?:\.\d+){3}$/.test(domain)) {
+            return res.status(400).json({ error: 'Local or IP-based wallet addresses are not supported.' });
+        }
+
+        const endpoint = `https://${domain}/.well-known/lnurlp/${encodeURIComponent(username)}`;
+        const response = await axios.get(endpoint, {
+            timeout: 7000,
+            maxRedirects: 3,
+            headers: { Accept: 'application/json' }
+        });
+        const details = response.data || {};
+        if (details.status === 'ERROR') throw new Error(details.reason || 'Wallet provider rejected the address.');
+        if (details.tag !== 'payRequest' || !details.callback || !Number.isFinite(Number(details.minSendable)) || !Number.isFinite(Number(details.maxSendable))) {
+            throw new Error('Wallet provider returned an invalid LNURL-pay response.');
+        }
+        const callbackUrl = new URL(details.callback);
+        if (callbackUrl.protocol !== 'https:') throw new Error('Wallet callback must use HTTPS.');
+
+        res.json({
+            success: true,
+            message: 'Address is valid and can receive payments. Automatic confirmation depends on LUD-21 support from the wallet provider.',
+            data: {
+                address,
+                min_sats: Math.ceil(Number(details.minSendable) / 1000),
+                max_sats: Math.floor(Number(details.maxSendable) / 1000),
+                comment_allowed: Number(details.commentAllowed || 0)
+            }
+        });
+    } catch (err) {
+        res.status(400).json({ error: 'LNA test failed. Verify the Lightning Address and try again.' });
+    }
+});
+
+// POST /api/wallet/blink/test - validate a single key or every key in the pool
+router.post('/api/wallet/blink/test', auth, async (req, res) => {
+    try {
+        const [rows] = await db.query(
+            'SELECT blink_api_key, blink_api_keys, blink_wallet_id FROM resellers WHERE id = ?',
+            [req.reseller.id]
+        );
+        const current = rows[0] || {};
+        const submittedPrimary = clean(req.body.api_key);
+        const submittedPool = parseSubmittedKeys(req.body.api_keys);
+        const existingPool = parseSubmittedKeys(current.blink_api_keys);
+        const keys = unique([
+            submittedPrimary && !isMasked(submittedPrimary) ? submittedPrimary : current.blink_api_key,
+            ...submittedPool.filter(key => !isMasked(key)),
+            ...(submittedPool.some(isMasked) || !submittedPool.length ? existingPool : [])
+        ]);
+
+        if (!keys.length) return res.status(400).json({ error: 'At least one LNP API key is required.' });
+
+        const details = [];
+        for (const key of keys) details.push(await BlinkService.getWalletDetails({ apiKey: key }));
+        const first = details[0];
+        if (!first?.wallet_id) throw new Error('The provider did not return a BTC wallet ID.');
+
+        res.json({
+            success: true,
+            message: 'LNP connection verified',
+            data: {
+                wallet_id: first.wallet_id,
+                balance_sats: details.reduce((sum, item) => sum + Number(item.balance_sats || 0), 0),
+                key_count: keys.length
+            }
+        });
+    } catch (err) {
+        res.status(400).json({ error: 'Blink test failed. Verify the API key and wallet ID.' });
+    }
+});
+
+// POST /api/wallet/blink - validate and persist the LNP key pool
+router.post('/api/wallet/blink', auth, async (req, res) => {
+    try {
+        const [rows] = await db.query(
+            'SELECT blink_api_key, blink_api_keys, blink_wallet_id FROM resellers WHERE id = ?',
+            [req.reseller.id]
+        );
+        const current = rows[0] || {};
+        const submittedPrimary = clean(req.body.api_key);
+        const submittedPool = parseSubmittedKeys(req.body.api_keys);
+        const existingPool = parseSubmittedKeys(current.blink_api_keys);
+        const keys = unique([
+            submittedPrimary && !isMasked(submittedPrimary) ? submittedPrimary : current.blink_api_key,
+            ...submittedPool.filter(key => !isMasked(key)),
+            ...(submittedPool.some(isMasked) || !submittedPool.length ? existingPool : [])
+        ]);
+
+        if (!keys.length) return res.status(400).json({ error: 'At least one LNP API key is required.' });
+
+        const details = await BlinkService.getWalletDetails({ apiKey: keys[0] });
+        const walletId = clean(req.body.wallet_id) || details.wallet_id || current.blink_wallet_id;
+        if (!walletId) throw new Error('The provider did not return a BTC wallet ID.');
+
+        await db.query(
+            `UPDATE resellers
+             SET wallet_type = 'blink', blink_api_key = ?, blink_api_keys = ?, blink_wallet_id = ?
+             WHERE id = ?`,
+            [keys[0], JSON.stringify(keys), walletId, req.reseller.id]
+        );
+
+        res.json({ success: true, message: 'LNP connected successfully', data: { wallet_id: walletId, key_count: keys.length } });
+    } catch (err) {
+        res.status(400).json({ error: 'Blink connection failed. Verify the API key and wallet ID.' });
     }
 });
 
@@ -91,8 +239,8 @@ router.post('/api/wallet/lnbits', auth, async (req, res) => {
         const dbRow = rows[0] || {};
 
         const targetUrl = url ? url.trim() : (dbRow.lnbits_url || 'https://legend.lnbits.com');
-        const key = (invoice_key && !invoice_key.startsWith('***')) ? invoice_key.trim() : dbRow.lnbits_invoice_key;
-        const targetAdminKey = (admin_key && !admin_key.startsWith('***')) ? admin_key.trim() : (admin_key ? dbRow.lnbits_admin_key : null);
+        const key = resolveStoredSecret(invoice_key, dbRow.lnbits_invoice_key);
+        const targetAdminKey = resolveStoredSecret(admin_key, dbRow.lnbits_admin_key);
 
         if (!key) return res.status(400).json({ error: 'LNbits Invoice/Read Key is required' });
 
@@ -104,9 +252,20 @@ router.post('/api/wallet/lnbits', auth, async (req, res) => {
             [targetUrl, key, targetAdminKey || null, req.reseller.id]
         );
 
+        // Read the row back through the persistence layer. A successful API
+        // response must mean the credentials will still exist after restart.
+        const [savedRows] = await db.query(
+            'SELECT wallet_type, lnbits_url, lnbits_invoice_key, lnbits_admin_key FROM resellers WHERE id = ?',
+            [req.reseller.id]
+        );
+        const saved = savedRows[0];
+        if (!saved || saved.wallet_type !== 'lnbits' || saved.lnbits_url !== targetUrl || saved.lnbits_invoice_key !== key || saved.lnbits_admin_key !== (targetAdminKey || null)) {
+            throw new Error('LNbits settings could not be verified after saving.');
+        }
+
         res.json({ success: true, message: 'LNbits wallet connected successfully' });
     } catch (err) {
-        res.status(400).json({ error: 'LNbits Connection Failed: ' + (err.response?.data?.message || err.message) });
+        res.status(400).json({ error: `LNbits connection failed: ${err.response?.data?.message || err.message}` });
     }
 });
 
@@ -118,7 +277,7 @@ router.post('/api/wallet/lnbits/test', auth, async (req, res) => {
         const dbRow = rows[0] || {};
 
         const targetUrl = url ? url.trim() : (dbRow.lnbits_url || 'https://legend.lnbits.com');
-        const key = (invoice_key && !invoice_key.startsWith('***')) ? invoice_key.trim() : dbRow.lnbits_invoice_key;
+        const key = resolveStoredSecret(invoice_key, dbRow.lnbits_invoice_key);
 
         if (!key) {
             return res.status(400).json({ error: 'Please enter your LNbits Invoice / Read Key to test connection.' });
@@ -127,7 +286,7 @@ router.post('/api/wallet/lnbits/test', auth, async (req, res) => {
         const details = await LNbitsService.getWalletDetails({ url: targetUrl, invoiceKey: key });
 
         let adminStatus = 'Not Configured';
-        const targetAdminKey = (admin_key && !admin_key.startsWith('***')) ? admin_key.trim() : dbRow.lnbits_admin_key;
+        const targetAdminKey = resolveStoredSecret(admin_key, dbRow.lnbits_admin_key);
         if (targetAdminKey) {
             try {
                 await LNbitsService.getWalletDetails({ url: targetUrl, invoiceKey: targetAdminKey });
@@ -147,7 +306,7 @@ router.post('/api/wallet/lnbits/test', auth, async (req, res) => {
             }
         });
     } catch (err) {
-        res.status(400).json({ error: 'LNbits Test Failed: ' + (err.response?.data?.message || err.message) });
+        res.status(400).json({ error: 'LNbits test failed. Verify the server URL and key.' });
     }
 });
 
@@ -158,8 +317,8 @@ router.post('/api/wallet/alby', auth, async (req, res) => {
         const [rows] = await db.query('SELECT alby_access_token, alby_nwc_string FROM resellers WHERE id = ?', [req.reseller.id]);
         const dbRow = rows[0] || {};
 
-        const token = (access_token && !access_token.startsWith('***')) ? access_token.trim() : (dbRow.alby_access_token || null);
-        const nwc = (nwc_string && !nwc_string.startsWith('nostr+walletconnect://***')) ? nwc_string.trim() : (dbRow.alby_nwc_string || null);
+        const token = resolveStoredSecret(access_token, dbRow.alby_access_token);
+        const nwc = resolveStoredSecret(nwc_string, dbRow.alby_nwc_string);
 
         if (!token && !nwc) {
             return res.status(400).json({ error: 'Alby Access Token or NWC Connection String is required.' });
@@ -178,7 +337,7 @@ router.post('/api/wallet/alby', auth, async (req, res) => {
             data: details
         });
     } catch (err) {
-        res.status(400).json({ error: 'Alby / NWC Failed: ' + (err.response?.data?.message || err.message) });
+        res.status(400).json({ error: 'Alby / NWC connection failed. Verify the connection details.' });
     }
 });
 
@@ -189,8 +348,8 @@ router.post('/api/wallet/alby/test', auth, async (req, res) => {
         const [rows] = await db.query('SELECT alby_access_token, alby_nwc_string FROM resellers WHERE id = ?', [req.reseller.id]);
         const dbRow = rows[0] || {};
 
-        const token = (access_token && !access_token.startsWith('***')) ? access_token.trim() : (dbRow.alby_access_token || null);
-        const nwc = (nwc_string && !nwc_string.startsWith('nostr+walletconnect://***')) ? nwc_string.trim() : (dbRow.alby_nwc_string || null);
+        const token = resolveStoredSecret(access_token, dbRow.alby_access_token);
+        const nwc = resolveStoredSecret(nwc_string, dbRow.alby_nwc_string);
 
         if (!token && !nwc) {
             return res.status(400).json({ error: 'Please enter your Alby Access Token or NWC Connection String.' });
@@ -204,71 +363,7 @@ router.post('/api/wallet/alby/test', auth, async (req, res) => {
             data: details
         });
     } catch (err) {
-        res.status(400).json({ error: 'Alby / NWC Test Failed: ' + (err.response?.data?.message || err.message) });
-    }
-});
-
-// POST /api/wallet/blink/test
-router.post('/api/wallet/blink/test', auth, async (req, res) => {
-    try {
-        const { api_key, api_keys } = req.body;
-        const [rows] = await db.query('SELECT blink_api_key, blink_api_keys, blink_wallet_id FROM resellers WHERE id = ?', [req.reseller.id]);
-        const dbRow = rows[0] || {};
-
-        const key = (api_key && !api_key.startsWith('***')) ? api_key.trim() : dbRow.blink_api_key;
-        if (!key && !api_keys) {
-            return res.status(400).json({ error: 'Blink API key is required to test.' });
-        }
-
-        const details = await BlinkService.getWalletDetails({ apiKey: key });
-        const keys = BlinkService.parseApiKeys(key, api_keys);
-
-        res.json({
-            success: true,
-            message: `Blink Connected: ${details.username}`,
-            data: {
-                ...details,
-                key_count: keys.length
-            }
-        });
-    } catch (err) {
-        res.status(400).json({ error: 'Blink Connection Failed: ' + (err.response?.data?.message || err.message) });
-    }
-});
-
-// POST /api/wallet/blink - save Blink / Lightning Node Pool
-router.post('/api/wallet/blink', auth, async (req, res) => {
-    try {
-        const { api_key, api_keys, wallet_id } = req.body;
-        const [rows] = await db.query('SELECT blink_api_key, blink_api_keys, blink_wallet_id FROM resellers WHERE id = ?', [req.reseller.id]);
-        const dbRow = rows[0] || {};
-
-        const key = (api_key && !api_key.startsWith('***')) ? api_key.trim() : dbRow.blink_api_key;
-        if (!key) {
-            return res.status(400).json({ error: 'Blink API key is required' });
-        }
-
-        const details = await BlinkService.getWalletDetails({ apiKey: key });
-        const targetWalletId = wallet_id ? wallet_id.trim() : (details.wallet_id || dbRow.blink_wallet_id);
-
-        let cleanKeysJson = null;
-        if (api_keys) {
-            const parsed = BlinkService.parseApiKeys(key, api_keys);
-            cleanKeysJson = JSON.stringify(parsed);
-        }
-
-        await db.query(
-            `UPDATE resellers SET wallet_type = "blink", blink_api_key = ?, blink_api_keys = ?, blink_wallet_id = ? WHERE id = ?`,
-            [key, cleanKeysJson, targetWalletId, req.reseller.id]
-        );
-
-        res.json({
-            success: true,
-            message: 'Lightning Node Pool connected successfully',
-            data: { wallet_id: targetWalletId }
-        });
-    } catch (err) {
-        res.status(400).json({ error: 'Blink Connection Failed: ' + (err.response?.data?.message || err.message) });
+        res.status(400).json({ error: 'Alby / NWC test failed. Verify the connection details.' });
     }
 });
 
@@ -296,26 +391,28 @@ router.post('/api/wallet/opennode/test', auth, async (req, res) => {
     }
 });
 
-// POST /api/wallet/opennode - save OpenNode
+// POST /api/wallet/opennode - validate and persist OpenNode settings
 router.post('/api/wallet/opennode', auth, async (req, res) => {
     try {
-        const { api_key, env } = req.body;
         const [rows] = await db.query('SELECT opennode_api_key, opennode_env FROM resellers WHERE id = ?', [req.reseller.id]);
-        const dbRow = rows[0] || {};
+        const current = rows[0] || {};
+        const submitted = clean(req.body.api_key);
+        const key = submitted && !isMasked(submitted) ? submitted : current.opennode_api_key;
+        const environment = req.body.env === 'dev' ? 'dev' : 'live';
+        if (!key) return res.status(400).json({ error: 'OpenNode API key is required.' });
 
-        const key = (api_key && !api_key.startsWith('***')) ? api_key.trim() : dbRow.opennode_api_key;
-        const environment = env || dbRow.opennode_env || 'live';
-
-        if (!key) return res.status(400).json({ error: 'OpenNode API key is required' });
-
+        const baseUrl = environment === 'dev' ? 'https://dev-api.opennode.com' : 'https://api.opennode.com';
+        await axios.get(`${baseUrl}/v1/account/payment/summary`, {
+            headers: { Authorization: key },
+            timeout: 7000
+        });
         await db.query(
-            `UPDATE resellers SET wallet_type = "opennode", opennode_api_key = ?, opennode_env = ? WHERE id = ?`,
+            "UPDATE resellers SET wallet_type = 'opennode', opennode_api_key = ?, opennode_env = ? WHERE id = ?",
             [key, environment, req.reseller.id]
         );
-
-        res.json({ success: true, message: 'OpenNode wallet saved successfully' });
+        res.json({ success: true, message: 'OpenNode connected successfully' });
     } catch (err) {
-        res.status(400).json({ error: 'OpenNode Save Failed: ' + err.message });
+        res.status(400).json({ error: 'OpenNode connection failed. Verify the environment and API key.' });
     }
 });
 
@@ -345,33 +442,45 @@ router.post('/api/wallet/btcpay/test', auth, async (req, res) => {
             data: resp.data
         });
     } catch (err) {
-        res.status(400).json({ error: 'BTCPay Test Failed: ' + (err.response?.data?.message || err.message) });
+        res.status(400).json({ error: 'BTCPay test failed. Verify the URL, store ID, and API key.' });
     }
 });
 
-// POST /api/wallet/btcpay - save BTCPay
+// POST /api/wallet/btcpay - validate and persist BTCPay settings
 router.post('/api/wallet/btcpay', auth, async (req, res) => {
     try {
-        const { url, store_id, api_key, webhook_id } = req.body;
-        const [rows] = await db.query('SELECT btcpay_url, btcpay_store_id, btcpay_api_key, btcpay_webhook_id FROM resellers WHERE id = ?', [req.reseller.id]);
-        const dbRow = rows[0] || {};
+        const [rows] = await db.query(
+            'SELECT btcpay_url, btcpay_store_id, btcpay_api_key, btcpay_webhook_id, btcpay_webhook_secret FROM resellers WHERE id = ?',
+            [req.reseller.id]
+        );
+        const current = rows[0] || {};
+        const targetUrl = (clean(req.body.url) || current.btcpay_url || '').replace(/\/+$/, '');
+        const storeId = clean(req.body.store_id) || current.btcpay_store_id;
+        const submittedKey = clean(req.body.api_key);
+        const key = submittedKey && !isMasked(submittedKey) ? submittedKey : current.btcpay_api_key;
+        const submittedWebhookSecret = clean(req.body.webhook_secret);
+        const webhookSecret = submittedWebhookSecret && !isMasked(submittedWebhookSecret)
+            ? submittedWebhookSecret
+            : current.btcpay_webhook_secret;
+        const webhookId = clean(req.body.webhook_id) || current.btcpay_webhook_id || null;
 
-        const targetUrl = url ? url.trim().replace(/\/+$/, '') : (dbRow.btcpay_url || '');
-        const storeId = store_id ? store_id.trim() : (dbRow.btcpay_store_id || '');
-        const key = (api_key && !api_key.startsWith('***')) ? api_key.trim() : (dbRow.btcpay_api_key || '');
-
-        if (!targetUrl || !storeId || !key) {
-            return res.status(400).json({ error: 'BTCPay Server URL, Store ID, and API Key are required' });
+        if (!targetUrl || !/^https?:\/\//i.test(targetUrl) || !storeId || !key) {
+            return res.status(400).json({ error: 'Valid BTCPay URL, Store ID, and API Key are required.' });
         }
 
+        const response = await axios.get(`${targetUrl}/api/v1/stores/${encodeURIComponent(storeId)}`, {
+            headers: { Authorization: `token ${key}` },
+            timeout: 7000
+        });
         await db.query(
-            `UPDATE resellers SET wallet_type = "btcpay", btcpay_url = ?, btcpay_store_id = ?, btcpay_api_key = ?, btcpay_webhook_id = ? WHERE id = ?`,
-            [targetUrl, storeId, key, webhook_id || dbRow.btcpay_webhook_id || null, req.reseller.id]
+            `UPDATE resellers SET wallet_type = 'btcpay', btcpay_url = ?, btcpay_store_id = ?,
+                    btcpay_api_key = ?, btcpay_webhook_id = ?, btcpay_webhook_secret = ?
+             WHERE id = ?`,
+            [targetUrl, storeId, key, webhookId, webhookSecret || null, req.reseller.id]
         );
-
-        res.json({ success: true, message: 'BTCPay Server saved successfully' });
+        res.json({ success: true, message: 'BTCPay Server connected successfully', store: response.data?.name || storeId });
     } catch (err) {
-        res.status(400).json({ error: 'BTCPay Save Failed: ' + err.message });
+        res.status(400).json({ error: 'BTCPay connection failed. Verify the URL, store ID, and API key.' });
     }
 });
 
@@ -381,6 +490,12 @@ router.post('/api/wallet/telegram', auth, async (req, res) => {
         const { bot_token, chat_id } = req.body;
         const cleanToken = (bot_token && !bot_token.startsWith('***')) ? bot_token.trim() : null;
         const cleanChatId = (chat_id && !chat_id.startsWith('***')) ? chat_id.trim() : null;
+        const [currentRows] = await db.query('SELECT telegram_bot_token,telegram_chat_id FROM resellers WHERE id=?', [req.reseller.id]);
+        const finalToken = cleanToken || currentRows[0]?.telegram_bot_token;
+        const finalChatId = cleanChatId || currentRows[0]?.telegram_chat_id;
+        if (!finalToken || !finalChatId) return res.status(400).json({ error: 'Bot Token and Chat ID are required. Send /start to the bot before saving.' });
+        const bot = await TelegramService.validateBot(finalToken);
+        await TelegramService.validateChat({ botToken: finalToken, chatId: finalChatId });
 
         await db.query(
             `UPDATE resellers SET
@@ -390,9 +505,9 @@ router.post('/api/wallet/telegram', auth, async (req, res) => {
             [cleanToken, cleanChatId, req.reseller.id]
         );
 
-        res.json({ success: true, message: 'Telegram settings saved successfully' });
+        res.json({ success: true, message: `Telegram @${bot.username || 'bot'} connected successfully` });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(400).json({ error: err.message || 'Failed to validate Telegram settings' });
     }
 });
 

@@ -2,7 +2,7 @@
  * Integration Tests: routes/owner.js (Master Boss Panel)
  * Tests: RBAC security (reseller denied, owner allowed), stats, generate reseller panel.
  */
-jest.mock('../../database/db');
+jest.mock('../../database/db', () => ({ query: jest.fn() }));
 jest.mock('../../middleware/auth', () => {
     const authMiddleware = async (req, res, next) => {
         // default mock role set in tests
